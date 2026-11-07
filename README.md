@@ -60,26 +60,7 @@ Rocket League saves replays to `Documents/My Games/Rocket League/TAGame/Demos`. 
 
 ## How it works
 
-```mermaid
-flowchart TB
-    subgraph A["From replay to shots"]
-        direction LR
-        R["① Replays<br/>Kaggle SSL · ballchasing<br/>C3–GC2 · original repo"]
-        P["② Parse<br/>subtr-actor → per-frame<br/>ball + car physics"]
-        T["③ Touches<br/>velocity jumps with a<br/>car hitbox in range"]
-        S["④ Shots<br/>last touch of a carry,<br/>simulated path hits goal"]
-        R --> P --> T --> S
-    end
-    subgraph B["From shots to xG"]
-        direction LR
-        L["⑤ Label<br/>goal before own team<br/>touches again (7 s)"]
-        F["⑥ Features<br/>~50 geometric features<br/>before + after the touch"]
-        M["⑦ Models<br/>LightGBM xG + xGOT<br/>+ per-rank calibration"]
-        D["⑧ Use<br/>CLI · Python API ·<br/>live dashboard"]
-        L --> F --> M --> D
-    end
-    S --> L
-```
+![The pipeline, step by step](docs/img/fig_pipeline.png)
 
 ### ① Replays
 

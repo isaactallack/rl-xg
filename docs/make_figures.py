@@ -68,6 +68,48 @@ def pitch(ax, y_min=-ph.ARENA_Y, alpha=1.0):
         s.set_visible(False)
 
 
+# --------------------------------------------------------------------------- 0
+def fig_pipeline():
+    from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
+    steps = [
+        ("Replays", "Kaggle SSL games, ballchasing\nC3–GC2, original repo", MUTED),
+        ("Parse", "subtr-actor → per-frame\nball and car physics", MUTED),
+        ("Touches", "ball velocity jumps with a\ncar hitbox in contact range", BLUE),
+        ("Shots", "last touch of a carry whose\nsimulated path reaches goal", BLUE),
+        ("Label", "goal if scored before the\nteam touches again (7 s)", ORANGE),
+        ("Features", "~50 geometric features,\nbefore and after the touch", ORANGE),
+        ("Models", "LightGBM xG + xGOT,\ncalibrated per rank band", GREEN),
+        ("Use", "CLI, Python API and\nlive dashboard", GREEN),
+    ]
+    W, H, GX, GY = 3.0, 1.55, 0.75, 1.1
+    fig, ax = plt.subplots(figsize=(14.5, 5.0))
+    ax.set_xlim(-0.2, 4 * W + 3 * GX + 0.2)
+    ax.set_ylim(-0.35, 2 * H + GY + 0.5)
+    ax.axis("off")
+    pos = []
+    for i, (title, body, col) in enumerate(steps):
+        row, k = divmod(i, 4)
+        x = k * (W + GX)
+        y = (H + GY) if row == 0 else 0
+        pos.append((x, y))
+        ax.add_patch(FancyBboxPatch((x, y), W, H, boxstyle="round,pad=0,rounding_size=0.18",
+                                    fc=PANEL, ec=col, lw=1.8))
+        ax.add_patch(plt.Circle((x + 0.42, y + H - 0.4), 0.24, fc=col, ec="none"))
+        ax.text(x + 0.42, y + H - 0.4, str(i + 1), ha="center", va="center", color=BG, fontsize=12, fontweight="bold")
+        ax.text(x + 0.8, y + H - 0.4, title, ha="left", va="center", color=FG, fontsize=14, fontweight="bold")
+        ax.text(x + 0.3, y + 0.5, body, ha="left", va="center", color=MUTED, fontsize=10.5, linespacing=1.45)
+    arrow = dict(arrowstyle="-|>", mutation_scale=16, color=MUTED, lw=1.6)
+    for i in range(7):
+        (x0, y0), (x1, y1) = pos[i], pos[i + 1]
+        if i == 3:   # wrap from the end of row 1 to the start of row 2 with an elbow
+            ym = H + GY / 2
+            ax.plot([x0 + W / 2, x0 + W / 2, x1 + W / 2], [y0, ym, ym], color=MUTED, lw=1.6, solid_capstyle="round")
+            ax.add_patch(FancyArrowPatch((x1 + W / 2, ym), (x1 + W / 2, y1 + H), **arrow, shrinkA=0, shrinkB=3))
+        else:
+            ax.add_patch(FancyArrowPatch((x0 + W, y0 + H / 2), (x1, y1 + H / 2), **arrow, shrinkA=3, shrinkB=3))
+    save(fig, "fig_pipeline.png")
+
+
 # --------------------------------------------------------------------------- 1
 def fig_touch_to_shot(replay_path: str):
     rep = load_replay(replay_path)
@@ -278,6 +320,7 @@ def main():
     a = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
     model = get_model()
+    fig_pipeline()
     fig_touch_to_shot(a.replay)
     fig_importance(model)
     df = pd.read_csv(a.shots, low_memory=False)
