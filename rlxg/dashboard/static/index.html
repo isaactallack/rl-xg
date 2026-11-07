@@ -1,0 +1,1219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RL xG</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+<script type="importmap">
+{ "imports": { "three": "/static/vendor/three.module.min.js", "three/addons/": "/static/vendor/" } }
+</script>
+<style>
+:root {
+  color-scheme: light;
+  --surface-0: #eef1f6;
+  --surface-1: #ffffff;
+  --surface-2: #f3f5f9;
+  --surface-3: #e8ecf2;
+  --border: #dde2ea;
+  --grid: #e9edf3;
+  --text-primary: #0e1420;
+  --text-secondary: #4a5568;
+  --text-muted: #7a8597;
+  --blue: #1f6fe5;
+  --orange: #e8601c;
+  --accent: #1f6fe5;
+  --good: #14a05a;
+  --critical: #d93a4f;
+  --warn: #c98a0b;
+  --gold: #c9930a;
+  --pitch: #e3e9f1;
+  --pitch-stripe: #dbe2ec;
+  --pitch-line: #b9c3d1;
+  --shadow: 0 1px 2px rgba(16,24,40,.05), 0 6px 20px rgba(16,24,40,.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --surface-0: #0b0e14;
+    --surface-1: #131821;
+    --surface-2: #1a212c;
+    --surface-3: #222b38;
+    --border: #232c3a;
+    --grid: #1f2733;
+    --text-primary: #eef2f8;
+    --text-secondary: #a9b3c4;
+    --text-muted: #6f7b8f;
+    --blue: #3b8cff;
+    --orange: #ff7a2f;
+    --accent: #3b8cff;
+    --good: #2fd27a;
+    --critical: #ff5468;
+    --warn: #f0b429;
+    --gold: #f5c84c;
+    --pitch: #121a24;
+    --pitch-stripe: #151e29;
+    --pitch-line: #2c3a4c;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.25);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-0: #0b0e14;
+  --surface-1: #131821;
+  --surface-2: #1a212c;
+  --surface-3: #222b38;
+  --border: #232c3a;
+  --grid: #1f2733;
+  --text-primary: #eef2f8;
+  --text-secondary: #a9b3c4;
+  --text-muted: #6f7b8f;
+  --blue: #3b8cff;
+  --orange: #ff7a2f;
+  --accent: #3b8cff;
+  --good: #2fd27a;
+  --critical: #ff5468;
+  --warn: #f0b429;
+  --gold: #f5c84c;
+  --pitch: #121a24;
+  --pitch-stripe: #151e29;
+  --pitch-line: #2c3a4c;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.25);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--surface-0); color: var(--text-primary);
+  font: 14px/1.45 Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+button, select, input { font: inherit; color: inherit; }
+.app { display: grid; grid-template-rows: auto 1fr; height: 100vh; }
+
+/* ---------- header ---------- */
+header {
+  display: flex; align-items: center; gap: 12px; padding: 10px 18px;
+  background: var(--surface-1); border-bottom: 1px solid var(--border);
+}
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 800; letter-spacing: -.01em; font-size: 16px; }
+.brand .mark {
+  width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; color: #fff; font-size: 12px; font-weight: 800;
+  background: linear-gradient(135deg, var(--blue) 0 50%, var(--orange) 50% 100%);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.15);
+}
+.brand small { display: block; color: var(--text-muted); font-weight: 500; font-size: 11px; letter-spacing: .02em; margin-top: -2px; }
+.status {
+  display: flex; align-items: center; gap: 8px; color: var(--text-secondary);
+  font-size: 12.5px; padding: 5px 11px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46ch;
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); flex: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 20%, transparent); }
+.dot.busy { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); animation: pulse 1s infinite alternate; }
+.dot.off { background: var(--text-muted); box-shadow: none; }
+@keyframes pulse { to { opacity: .35; } }
+.spacer { flex: 1; }
+.btn {
+  border: 1px solid var(--border); background: var(--surface-1); border-radius: 9px;
+  padding: 6px 12px; cursor: pointer; transition: background .12s, border-color .12s;
+}
+.btn:hover { background: var(--surface-2); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.ghost { border-color: transparent; background: transparent; color: var(--text-secondary); }
+.btn.ghost:hover { background: var(--surface-2); }
+select.btn { padding-right: 8px; }
+
+/* ---------- sidebar ---------- */
+.layout { display: grid; grid-template-columns: 300px 1fr; min-height: 0; }
+aside { border-right: 1px solid var(--border); background: var(--surface-1); overflow-y: auto; min-height: 0; }
+.tabs { display: flex; gap: 4px; padding: 12px 12px 8px; position: sticky; top: 0; background: var(--surface-1); z-index: 1; }
+.tab { flex: 1; text-align: center; padding: 7px 4px; border-radius: 9px; cursor: pointer; color: var(--text-secondary); border: 1px solid transparent; background: none; font-weight: 500; font-size: 13px; }
+.tab:hover { color: var(--text-primary); }
+.tab.active { background: var(--surface-2); color: var(--text-primary); border-color: var(--border); font-weight: 600; }
+.mlist { list-style: none; margin: 0; padding: 2px 8px 16px; }
+.mitem {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 2px 10px; align-items: center;
+  padding: 9px 10px; border-radius: 11px; cursor: pointer; border: 1px solid transparent; position: relative;
+}
+.mitem:hover { background: var(--surface-2); }
+.mitem.active { background: var(--surface-2); border-color: var(--border); }
+.mitem.active::before { content: ""; position: absolute; left: -8px; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent); }
+.mitem.new { animation: flash 2s ease-out; }
+@keyframes flash { from { background: color-mix(in srgb, var(--accent) 25%, transparent); } }
+.chip {
+  grid-row: span 2; width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center;
+  font-weight: 800; font-size: 12px; background: var(--surface-2); color: var(--text-secondary);
+}
+.chip.w { color: var(--good); background: color-mix(in srgb, var(--good) 14%, transparent); }
+.chip.l { color: var(--critical); background: color-mix(in srgb, var(--critical) 14%, transparent); }
+.mscore { font-weight: 700; }
+.mmeta { color: var(--text-muted); font-size: 12px; }
+.mxg { font-size: 12px; color: var(--text-secondary); text-align: right; }
+.minibar { display: flex; height: 3px; border-radius: 2px; overflow: hidden; margin-top: 4px; background: var(--surface-3); }
+.teamtxt-blue::before, .teamtxt-orange::before {
+  content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; vertical-align: 1px;
+}
+.teamtxt-blue::before { background: var(--blue); }
+.teamtxt-orange::before { background: var(--orange); }
+
+/* ---------- main ---------- */
+main { overflow-y: auto; padding: 18px; min-height: 0; }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 16px; padding: 18px; box-shadow: var(--shadow); min-width: 0; }
+.card h3 { margin: 0 0 2px; font-size: 15px; font-weight: 700; letter-spacing: -.005em; }
+.card .sub { color: var(--text-muted); font-size: 12px; margin: 0 0 12px; }
+.card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.grid { display: grid; gap: 16px; }
+.g-two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+
+/* hero */
+.hero-card { padding: 0; overflow: hidden; }
+.hero-strip { height: 4px; background: linear-gradient(90deg, var(--blue), var(--blue) 50%, var(--orange) 50%, var(--orange)); }
+.hero-in { padding: 14px 20px 18px; }
+.hero-top { display: flex; justify-content: space-between; align-items: center; color: var(--text-muted); font-size: 12px; }
+.hero { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px; margin-top: 6px; }
+.hero .side { display: flex; flex-direction: column; gap: 6px; }
+.hero .side.r { align-items: flex-end; text-align: right; }
+.hero .tname { font-size: 11px; text-transform: uppercase; letter-spacing: .12em; font-weight: 700; }
+.hero .tname.blue { color: var(--blue); } .hero .tname.orange { color: var(--orange); }
+.hero .players { display: flex; flex-direction: column; gap: 2px; font-weight: 600; }
+.hero .side.r .players { align-items: flex-end; }
+.hero .center { text-align: center; }
+.hero .score { font-size: 56px; font-weight: 800; line-height: 1; letter-spacing: -.03em; }
+.hero .score .sep { color: var(--text-muted); font-weight: 300; margin: 0 14px; }
+.hero .score .win { color: var(--text-primary); } .hero .score .lose { color: var(--text-muted); }
+.hero .verdict { margin-top: 8px; font-size: 13px; color: var(--text-secondary); max-width: 46ch; }
+.statrows { margin: 18px auto 0; max-width: 620px; display: grid; gap: 9px; }
+.statrow { display: grid; grid-template-columns: 52px 1fr 120px 1fr 52px; align-items: center; gap: 10px; font-size: 13px; }
+.statrow .k { text-align: center; color: var(--text-secondary); font-size: 12px; }
+.statrow .v { font-weight: 700; } .statrow .v.r { text-align: right; }
+.statrow .v.lead { padding: 1px 7px; border-radius: 999px; justify-self: start; color: #fff; }
+.statrow .v.r.lead { justify-self: end; }
+.statrow .bar { height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; display: flex; }
+.statrow .bar.l { justify-content: flex-end; }
+.statrow .bar i { display: block; height: 100%; border-radius: 3px; }
+.callout { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+.callout button { border: 1px solid var(--border); background: var(--surface-2); border-radius: 999px; padding: 4px 12px 4px 6px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.callout button:hover { border-color: var(--text-muted); }
+.callout .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); font-weight: 700; padding: 2px 7px; background: var(--surface-1); border-radius: 999px; }
+
+/* pills */
+.pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.pill.goal { color: var(--good); background: color-mix(in srgb, var(--good) 15%, transparent); }
+.pill.stop { color: var(--warn); background: color-mix(in srgb, var(--warn) 15%, transparent); }
+.pill.frame { color: var(--gold); background: color-mix(in srgb, var(--gold) 16%, transparent); }
+.pill.miss { color: var(--text-secondary); background: var(--surface-3); }
+.you { font-size: 9.5px; padding: 1px 6px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); margin-left: 6px; text-transform: uppercase; letter-spacing: .08em; font-weight: 700; vertical-align: 1px; }
+
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--text-secondary); flex-wrap: wrap; align-items: center; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+.legend i.ring { background: none !important; border: 2px solid var(--text-secondary); border-radius: 50%; }
+.legend i.fill { border-radius: 50%; background: var(--text-secondary); }
+svg text { fill: var(--text-muted); font-size: 11px; font-family: inherit; }
+svg .lbl { fill: var(--text-primary); font-size: 12px; font-weight: 700; }
+
+/* shot map */
+.mapwrap { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 18px; align-items: start; }
+.filters { display: flex; gap: 4px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 3px; }
+.filters button { border: 0; background: none; padding: 4px 10px; border-radius: 7px; cursor: pointer; color: var(--text-secondary); font-size: 12.5px; font-weight: 500; }
+.filters button.on { background: var(--surface-1); color: var(--text-primary); box-shadow: 0 1px 2px rgba(0,0,0,.15); font-weight: 600; }
+#shotmap svg { display: block; width: 100%; height: auto; }
+#shotmap .shot { cursor: pointer; transition: opacity .15s; }
+.insp { border: 1px solid var(--border); border-radius: 14px; padding: 14px; background: var(--surface-2); }
+.insp-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 14px; }
+.insp .who { display: flex; align-items: center; gap: 9px; font-weight: 700; min-width: 0; }
+.insp .who span.n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.avatar { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 800; font-size: 13px; flex: none; }
+.insp .nav { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.insp .when { display: flex; flex-direction: column; align-items: center; min-width: 46px; line-height: 1.15; }
+.insp .when b { font-size: 15px; }
+.insp .when span { font-size: 10.5px; color: var(--text-muted); }
+.navbtn { width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); font-size: 17px; line-height: 1; cursor: pointer; display: grid; place-items: center; padding: 0 0 2px; }
+.navbtn:hover:not(:disabled) { background: var(--surface-3); }
+.navbtn:disabled { opacity: .35; cursor: default; }
+.insp .kv { display: grid; grid-template-columns: auto 1fr; gap: 7px 14px; font-size: 13px; }
+.insp .kv .k { color: var(--text-muted); white-space: nowrap; }
+.insp .kv .v { font-weight: 600; text-align: right; }
+.insp .gm { display: flex; flex-direction: column; align-items: center; gap: 6px; margin: 16px 0 12px; }
+.insp .nums { display: flex; gap: 34px; }
+.insp .nums div { display: flex; flex-direction: column; align-items: center; }
+.insp .nums b { font-size: 20px; font-weight: 800; }
+.insp .nums span { font-size: 11px; color: var(--text-muted); }
+.watch { width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 9px; font-weight: 700; border-radius: 10px; }
+.watch svg { fill: currentColor; }
+
+/* tables */
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 8px 9px; text-align: right; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--text-muted); font-weight: 700; }
+th:first-child, td:first-child { text-align: left; }
+td.l, th.l { text-align: left; }
+tbody tr:hover, tbody tr.hl { background: var(--surface-2); }
+tbody tr:last-child td { border-bottom: 0; }
+.xgbar { display: inline-flex; align-items: center; gap: 8px; justify-content: flex-end; }
+.xgbar .track { width: 64px; height: 6px; background: var(--surface-3); border-radius: 3px; overflow: hidden; }
+.xgbar .track > .fill { display: block; height: 100%; border-radius: 3px; }
+tbody tr.sel { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--accent); }
+.playbtn { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface-1); cursor: pointer; display: inline-grid; place-items: center; padding: 0 0 0 2px; color: var(--text-secondary); }
+.playbtn:hover { color: #fff; background: var(--accent); border-color: var(--accent); }
+.playbtn svg { fill: currentColor; }
+.tablewrap { overflow-x: auto; }
+
+/* trends */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.tile .k { color: var(--text-muted); font-size: 12px; font-weight: 500; }
+.tile .v { font-size: 28px; font-weight: 800; margin-top: 2px; letter-spacing: -.02em; }
+.tile .d { color: var(--text-secondary); font-size: 12px; }
+#sessionCtl { display: flex; align-items: center; gap: 6px; }
+.sess-pill { display: flex; align-items: center; gap: 8px; padding: 4px 6px 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); font-size: 13px; }
+.sess-pill .rec { width: 8px; height: 8px; border-radius: 50%; background: var(--critical); animation: pulse 1.2s infinite alternate; }
+.sess-pill button { padding: 2px 10px; border-radius: 999px; }
+.scopebar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.scopebar h2 { margin: 0; font-size: 20px; font-weight: 800; letter-spacing: -.01em; }
+.scopebar .mmeta { flex: 1; }
+
+/* misses */
+.misses { display: grid; gap: 10px; }
+.misscard { display: grid; grid-template-columns: 44px 96px minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 12px 16px; }
+.misscard .rank { font-size: 22px; font-weight: 800; color: var(--text-muted); text-align: center; }
+.misscard.top .rank { color: var(--gold); }
+.misscard .thumb svg { display: block; }
+.misscard .info { min-width: 0; display: grid; gap: 4px; }
+.misscard .info .t { font-weight: 700; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.misscard .big { font-size: 28px; font-weight: 800; letter-spacing: -.02em; line-height: 1; }
+.misscard .big small { font-size: 12px; color: var(--text-muted); font-weight: 600; margin-left: 3px; }
+.misscard .acts { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+.misscard .xgmeter { height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; max-width: 260px; }
+.misscard .xgmeter i { display: block; height: 100%; border-radius: 3px; }
+
+.empty { max-width: 640px; margin: 8vh auto; text-align: center; color: var(--text-secondary); }
+.empty h2 { color: var(--text-primary); }
+code { background: var(--surface-2); padding: 1px 5px; border-radius: 5px; font-size: 12.5px; }
+#tip {
+  position: fixed; pointer-events: none; z-index: 50; background: var(--surface-1);
+  border: 1px solid var(--border); border-radius: 11px; padding: 9px 11px; font-size: 12px;
+  box-shadow: 0 8px 28px rgba(0,0,0,.25); min-width: 150px; display: none;
+}
+#tip .t { font-weight: 700; margin-bottom: 4px; }
+#tip .row { display: flex; justify-content: space-between; gap: 14px; color: var(--text-secondary); }
+#tip .row b { color: var(--text-primary); font-weight: 600; }
+#drop {
+  position: fixed; inset: 0; z-index: 40; display: none; place-items: center;
+  background: color-mix(in srgb, var(--surface-0) 80%, transparent); backdrop-filter: blur(2px);
+}
+#drop div { border: 2px dashed var(--accent); border-radius: 18px; padding: 48px 64px; font-size: 18px; background: var(--surface-1); }
+#toasts { position: fixed; bottom: 16px; right: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 120; }
+.toast { background: var(--surface-1); border: 1px solid var(--border); border-radius: 11px; padding: 10px 14px; box-shadow: var(--shadow); max-width: 360px; font-size: 13px; }
+dialog { border: 1px solid var(--border); border-radius: 16px; background: var(--surface-1); color: var(--text-primary); max-width: 620px; padding: 20px 22px; }
+dialog::backdrop { background: rgba(0,0,0,.5); }
+dialog li { margin: 4px 0; }
+.recent { font-size: 12px; color: var(--text-muted); max-height: 160px; overflow: auto; }
+
+/* ---------- 3D replay ---------- */
+#r3d { position: fixed; inset: 0; z-index: 100; display: none; background: rgba(4,6,10,.72); backdrop-filter: blur(3px); padding: 24px; }
+#r3d.open { display: grid; }
+.r3d-box { position: relative; border-radius: 18px; overflow: hidden; background: #0a0d13; border: 1px solid #222b38; box-shadow: 0 20px 80px rgba(0,0,0,.6); display: grid; grid-template-rows: 1fr auto; min-height: 0; color: #eef2f8; }
+.r3d-stage { position: relative; min-height: 0; }
+.r3d-stage canvas { display: block; width: 100%; height: 100%; }
+.r3d-hud { position: absolute; top: 14px; left: 14px; right: 14px; display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; pointer-events: none; }
+.r3d-hud > * { pointer-events: auto; }
+.r3d-info { background: rgba(12,16,23,.82); border: 1px solid #263042; border-radius: 14px; padding: 12px 14px; min-width: 240px; backdrop-filter: blur(6px); }
+.r3d-info .who { display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 15px; }
+.r3d-info .meta { color: #8b97ab; font-size: 12px; margin-top: 2px; }
+.r3d-info .nums { display: flex; gap: 20px; margin-top: 10px; align-items: flex-end; }
+.r3d-info .nums div { display: flex; flex-direction: column; }
+.r3d-info .nums b { font-size: 22px; font-weight: 800; line-height: 1.1; }
+.r3d-info .nums span { font-size: 10.5px; color: #8b97ab; text-transform: uppercase; letter-spacing: .08em; }
+.r3d-close { width: 38px; height: 38px; border-radius: 50%; border: 1px solid #263042; background: rgba(12,16,23,.82); color: #eef2f8; font-size: 20px; cursor: pointer; }
+.r3d-close:hover { background: #222b38; }
+.r3d-clock { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); background: rgba(12,16,23,.82); border: 1px solid #263042; border-radius: 999px; padding: 6px 14px; font-weight: 700; font-size: 13px; pointer-events: none; }
+.r3d-clock .ph { color: #8b97ab; font-weight: 600; margin-left: 6px; }
+.r3d-legend { position: absolute; left: 14px; bottom: 12px; display: flex; gap: 14px; font-size: 11.5px; color: #a9b3c4; background: rgba(12,16,23,.7); padding: 6px 10px; border-radius: 10px; pointer-events: none; }
+.r3d-legend i { display: inline-block; width: 14px; height: 0; border-top: 2px solid; margin-right: 6px; vertical-align: 3px; }
+.r3d-legend i.dash { border-top-style: dashed; }
+.r3d-bar { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto auto; gap: 14px; align-items: center; padding: 12px 16px; background: #10151d; border-top: 1px solid #1f2733; }
+.r3d-bar button { background: #1a212c; border: 1px solid #263042; color: #eef2f8; border-radius: 9px; padding: 6px 10px; cursor: pointer; font-size: 12.5px; }
+.r3d-bar button:hover { background: #222b38; }
+.r3d-bar button.on { background: #3b8cff; border-color: #3b8cff; color: #fff; font-weight: 600; }
+.r3d-bar .grp { display: flex; gap: 4px; }
+.r3d-play { width: 40px; height: 40px; border-radius: 50% !important; display: grid; place-items: center; padding: 0 !important; background: #3b8cff !important; border-color: #3b8cff !important; }
+.r3d-play svg { fill: #fff; }
+.r3d-scrub { position: relative; height: 28px; }
+.r3d-scrub input { position: absolute; inset: 0; width: 100%; margin: 0; accent-color: #3b8cff; background: transparent; }
+.r3d-scrub .mk { position: absolute; top: -6px; transform: translateX(-50%); font-size: 10px; font-weight: 700; color: #a9b3c4; pointer-events: none; white-space: nowrap; }
+.r3d-scrub .mk::after { content: ""; display: block; width: 2px; height: 10px; margin: 1px auto 0; background: currentColor; border-radius: 1px; }
+.r3d-time { font-weight: 700; font-size: 13px; min-width: 64px; text-align: right; }
+
+@media (max-width: 1200px) { .g-two { grid-template-columns: 1fr; } }
+@media (max-width: 980px) { .mapwrap { grid-template-columns: 1fr; } }
+@media (max-width: 760px) {
+  .layout { grid-template-columns: 1fr; }
+  aside { max-height: 34vh; border-right: 0; border-bottom: 1px solid var(--border); }
+  .status { display: none; }
+  .hero .score { font-size: 40px; }
+  main { padding: 12px 16px; }
+  .statrow { grid-template-columns: 40px 1fr 90px 1fr 40px; }
+  .misscard { grid-template-columns: 30px minmax(0, 1fr) auto; }
+  .misscard .thumb { display: none; }
+  #r3d { padding: 0; }
+  .r3d-box { border-radius: 0; }
+  .r3d-bar { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .r3d-bar .hide-sm { display: none; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand"><div class="mark">xG</div><div>RL xG<small>expected goals</small></div></div>
+    <div class="status" id="status"><span class="dot off"></span><span>connecting…</span></div>
+    <div class="spacer"></div>
+    <div id="sessionCtl"></div>
+    <label class="mmeta" for="me">You</label>
+    <select class="btn" id="me" title="Which player is you"></select>
+    <button class="btn ghost" id="setupBtn" title="Connect Rockpload">Setup</button>
+    <button class="btn ghost" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">◐</button>
+    <button class="btn primary" id="uploadBtn">Add replays</button>
+    <input type="file" id="fileIn" accept=".replay" multiple hidden>
+  </header>
+  <div class="layout">
+    <aside>
+      <div class="tabs">
+        <button class="tab active" data-view="match">Matches</button>
+        <button class="tab" data-view="misses">Misses</button>
+        <button class="tab" data-view="trends">Trends</button>
+      </div>
+      <ul class="mlist" id="mlist"></ul>
+    </aside>
+    <main id="main"></main>
+  </div>
+</div>
+<div id="tip"></div>
+<div id="drop"><div>Drop .replay files to analyse</div></div>
+<div id="toasts"></div>
+<div id="r3d" role="dialog" aria-modal="true" aria-label="3D shot replay"></div>
+<dialog id="setup">
+  <h3 style="margin-top:0">Auto-tracking your games</h3>
+  <p>The dashboard picks up replays three ways:</p>
+  <ol>
+    <li><b>Rockpload (bundled).</b> <span id="rpStatus"></span><br>
+      It starts with the dashboard, already set up to send ranked 2v2 replays here
+      (website <code>RL xG dashboard</code> → <code id="rpUrl"></code><code>/upload</code>).
+      The first time, sign in with your Epic account in Rockpload's window.
+      By default it uploads when you close Rocket League (and every ~45 min);
+      turn off <i>No Upload if player is online</i> in its behaviour settings to get games while you're still playing.
+    </li>
+    <li><b>Folder watching.</b> Saved replays in the watched folders are analysed automatically:
+      <div class="recent" id="watchList"></div>
+      Add more with <code>python -m rlxg.dashboard --watch "C:\path\to\folder"</code>
+      (e.g. Rockpload's FileSystem storage folder).</li>
+    <li><b>Manual.</b> Drag .replay files anywhere onto this page, or use <i>Add replays</i>.</li>
+  </ol>
+  <p class="mmeta">Only 2v2 games are analysed (the model is trained on 2v2).</p>
+  <h4 style="margin-bottom:4px">Recent files</h4>
+  <div class="recent" id="recentFiles"></div>
+  <form method="dialog" style="text-align:right;margin-top:12px"><button class="btn">Close</button></form>
+</dialog>
+
+<script>
+// ---------- utilities ----------
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const api = (p, o) => fetch(p, o).then(r => { if (!r.ok && r.status !== 409) throw new Error(r.status); return r.json(); });
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const fmt = (x, d = 2) => (x ?? 0).toFixed(d);
+const signed = (x, d = 2) => (x > 0 ? "+" : x < 0 ? "−" : "±") + Math.abs(x).toFixed(d);
+function clockLabel(el) {          // elapsed seconds -> RL scoreboard style
+  if (el <= 300) { const r = Math.max(0, Math.round(300 - el)); return `${Math.floor(r / 60)}:${String(r % 60).padStart(2, "0")}`; }
+  const o = Math.round(el - 300); return `+${Math.floor(o / 60)}:${String(o % 60).padStart(2, "0")}`;
+}
+function parseDate(s) {            // "2026-09-30 21-24-14" or ISO
+  if (!s) return null;
+  const m = s.match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2})[-:](\d{2})/);
+  return m ? new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5]) : null;
+}
+const dateLabel = s => { const d = parseDate(s); return d ? d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "unknown date"; };
+const teamColor = t => t === "blue" ? css("--blue") : css("--orange");
+const otherTeam = t => t === "blue" ? "orange" : "blue";
+const kmh = uu => Math.round(uu * 0.036);
+const PLAY_ICON = (s = 12) => `<svg width="${s}" height="${s}" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 1.2v9.6L10.5 6z"/></svg>`;
+// round axis: step from {1,2,2.5,5}x10^k so ~4 ticks land on round numbers
+function axis(maxV, target = 4) {
+  const raw = Math.max(maxV, 1e-9) / target, p = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * p).find(s => s >= raw);
+  const max = Math.max(step, Math.ceil(maxV / step - 1e-9) * step);
+  const ticks = []; for (let v = 0; v <= max + step / 2; v += step) ticks.push(+v.toFixed(6));
+  return { max, ticks };
+}
+const tickLabel = v => Number.isInteger(v) ? String(v) : v.toFixed(1);
+function toast(msg, ms = 4000) {
+  const el = document.createElement("div"); el.className = "toast"; el.innerHTML = msg;
+  $("#toasts").appendChild(el); setTimeout(() => el.remove(), ms);
+}
+
+// ---------- tooltip ----------
+const tip = $("#tip");
+function showTip(e, html) {
+  tip.innerHTML = html; tip.style.display = "block";
+  const pad = 14, w = tip.offsetWidth, h = tip.offsetHeight;
+  let x = e.clientX + pad, y = e.clientY + pad;
+  if (x + w > innerWidth - 8) x = e.clientX - w - pad;
+  if (y + h > innerHeight - 8) y = e.clientY - h - pad;
+  tip.style.left = x + "px"; tip.style.top = y + "px";
+}
+const hideTip = () => tip.style.display = "none";
+const row = (k, v) => `<div class="row"><span>${k}</span><b>${v}</b></div>`;
+
+// ---------- state ----------
+const state = { matches: [], me: null, current: null, data: null, view: "match", seen: new Set(),
+                status: null, sessions: [], activeSession: null, scope: null, mapFilter: "all",
+                missWho: "me", missScope: "all" };
+
+// ---------- shot vocabulary ----------
+// end_kind comes from the analysis (where the real ball was stopped); older games fall back to the prediction
+const KINDS = {
+  goal: ["Goal", "goal"], saved: ["Saved", "stop"], blocked: ["Blocked", "stop"],
+  post: ["Hit the post", "frame"], bar: ["Hit the bar", "frame"], wide: ["Wide", "miss"],
+  over: ["Over the bar", "miss"], wall: ["Off the wall", "miss"], short: ["Fell short", "miss"],
+};
+function shotOutcome(s) {
+  if (s.end_kind && KINDS[s.end_kind]) return s.end_kind;
+  if (s.goal) return "goal";
+  if (s.on_target) return "saved";
+  return (s.cross_z ?? 0) > 643 - 93 ? "over" : "wide";
+}
+const resultLabel = s => KINDS[shotOutcome(s)][0];
+const resultPill = s => { const [t, c] = KINDS[shotOutcome(s)]; return `<span class="pill ${c}">${t}</span>`; };
+function shotSituation(s) {
+  if (s.prev_by_teammate) return "From a pass";
+  if (s.prev_by_opponent) return "Rebound / 50";
+  if ((s.carry_time ?? 0) > 1) return "After a dribble";
+  return "Regular play";
+}
+function shotKind(s) {
+  const base = s.ball_z > 300 ? "Aerial" : s.shooter_airborne ? "Jump shot" : "Ground shot";
+  return s.shooter_dodge ? `${base}, flip` : base;
+}
+const initial = n => esc((String(n || "?").trim()[0] || "?").toUpperCase());
+
+// ---------- sessions ----------
+async function loadSessions() {
+  const r = await api("/api/sessions");
+  state.sessions = r.sessions; state.activeSession = r.active;
+  renderSessionCtl();
+}
+function renderSessionCtl() {
+  const s = state.activeSession, el = $("#sessionCtl");
+  if (s) {
+    const n = state.matches.filter(m => m.session_id === s.id).length;
+    el.innerHTML = `<div class="sess-pill" title="Games analysed now are added to this session"><span class="rec"></span>
+      <span>${esc(s.name)} · ${n} game${n === 1 ? "" : "s"}</span><button class="btn" id="endSess">End</button></div>`;
+    $("#endSess").onclick = async () => { await api("/api/sessions/stop", { method: "POST" }); await loadSessions(); if (state.view === "trends") renderTrends(); };
+  } else {
+    el.innerHTML = `<button class="btn" id="startSess" title="Track the next games together">Start session</button>`;
+    $("#startSess").onclick = async () => {
+      const name = prompt("Session name (optional)", "");
+      if (name === null) return;
+      const sess = await api("/api/sessions/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim() || null }) });
+      await loadSessions(); state.scope = sess.id;
+      toast(`Session started. New games will be grouped under <b>${esc(sess.name)}</b>.`);
+      if (state.view === "trends") renderTrends();
+    };
+  }
+}
+
+async function loadMatches(selectNewest = false) {
+  const r = await api("/api/matches");
+  const firstLoad = state.seen.size === 0;
+  const fresh = r.matches.filter(m => !state.seen.has(m.id)).map(m => m.id);
+  r.matches.forEach(m => state.seen.add(m.id));
+  state.matches = r.matches; state.me = r.me;
+  if (!state.current && r.matches.length) state.current = r.matches[0].id;
+  if (selectNewest && fresh.length) state.current = r.matches[0].id;
+  renderList(firstLoad ? [] : fresh);
+  renderSessionCtl();
+  if (state.view === "trends") renderTrends();
+  else if (state.view === "misses") renderMisses();
+  else if (state.current) await openMatch(state.current, false);
+  else renderEmpty();
+}
+
+async function loadPlayers() {
+  const r = await api("/api/players");
+  const sel = $("#me");
+  sel.innerHTML = r.players.length ? r.players.map(p => `<option value="${esc(p.pid)}" ${p.pid === r.me ? "selected" : ""}>${esc(p.name)} (${p.games})</option>`).join("") : `<option>—</option>`;
+}
+
+function resultFor(m) {
+  if (!m.me) return null;
+  const mine = m.score[m.me.team], theirs = m.score[otherTeam(m.me.team)];
+  return mine > theirs ? "w" : mine < theirs ? "l" : null;
+}
+
+function renderList(fresh = []) {
+  const ul = $("#mlist");
+  if (!state.matches.length) { ul.innerHTML = `<li class="mmeta" style="padding:12px">No games yet.</li>`; return; }
+  ul.innerHTML = state.matches.map(m => {
+    const res = resultFor(m);
+    const myXg = m.me ? `${esc(m.me.player)} ${fmt(m.me.xg)}` : "";
+    const tot = Math.max(m.xg.blue + m.xg.orange, 1e-6);
+    return `<li class="mitem ${m.id === state.current && state.view === "match" ? "active" : ""} ${fresh.includes(m.id) ? "new" : ""}" data-id="${esc(m.id)}">
+      <div class="chip ${res || ""}">${res ? res.toUpperCase() : "–"}</div>
+      <div class="mscore"><span class="teamtxt-blue"></span>${m.score.blue} – ${m.score.orange}<span class="teamtxt-orange" style="margin-left:6px"></span></div>
+      <div class="mxg">xG ${fmt(m.xg.blue, 1)} – ${fmt(m.xg.orange, 1)}
+        <div class="minibar"><i style="width:${100 * m.xg.blue / tot}%;background:var(--blue)"></i><i style="flex:1;background:var(--orange)"></i></div></div>
+      <div class="mmeta">${dateLabel(m.date)}</div>
+      <div class="mmeta" style="text-align:right">${myXg}</div>
+    </li>`;
+  }).join("");
+  ul.querySelectorAll(".mitem").forEach(li => li.onclick = () => { state.current = li.dataset.id; setView("match"); });
+}
+
+function setView(v) {
+  state.view = v;
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.view === v));
+  if (v === "trends") { renderList(); renderTrends(); }
+  else if (v === "misses") { renderList(); $("#main").innerHTML = `<div class="empty">Loading misses…</div>`; renderMisses(); }
+  else if (state.current) openMatch(state.current);
+}
+
+function renderEmpty() {
+  $("#main").innerHTML = `<div class="empty">
+    <h2>No games analysed yet</h2>
+    <p>Drag <code>.replay</code> files onto this page, or click <b>Add replays</b>.</p>
+    <p>To track games automatically while you play, open <b>Setup</b> and point Rockpload at this dashboard.
+       Replays saved to your Demos folder are picked up too.</p>
+  </div>`;
+}
+
+async function openMatch(id, rerenderList = true, shotIdx = null) {
+  state.current = id;
+  const req = state.openReq = (state.openReq || 0) + 1;
+  if (rerenderList) renderList();
+  const d = await api(`/api/matches/${encodeURIComponent(id)}`);
+  // a newer click/refresh started while this was loading: drop this stale response
+  if (req !== state.openReq || state.current !== id || state.view !== "match") return;
+  state.data = d;
+  if (shotIdx != null) { state.shotFor = d.replay_id; state.shotSel = shotIdx; }
+  renderMatch(d);
+}
+
+// ---------- match view ----------
+function teamStats(d, t) {
+  const s = d.shots.filter(x => x.team === t), T = d.teams.find(x => x.team === t) || {};
+  return {
+    xg: T.xg ?? 0, xgot: T.xgot ?? T.xg ?? 0, shots: s.length, on_target: s.filter(x => x.on_target).length,
+    big: s.filter(x => x.xg >= 0.5).length,
+    saves: d.players.filter(p => p.team === t).reduce((a, p) => a + (p.saves ?? 0), 0),
+  };
+}
+
+function renderMatch(d) {
+  const me = d.players.find(p => p.pid === state.me);
+  const B = teamStats(d, "blue"), O = teamStats(d, "orange");
+  const roster = t => d.players.filter(p => p.team === t).map(p => `<span>${esc(p.player)}${p.pid === state.me ? '<span class="you">you</span>' : ""}</span>`).join("");
+  let verdict;
+  if (me) {
+    const myT = me.team, mdiff = (me.team === "blue" ? B.xg - O.xg : O.xg - B.xg);
+    const won = d.score[myT] > d.score[otherTeam(myT)];
+    verdict = `${Math.abs(mdiff) < 0.3 ? "Even on chances" : mdiff > 0 ? "Your team created the better chances" : "The opponents created the better chances"} (${signed(mdiff)} xG)`
+      + (won && mdiff < -0.5 ? " — a smash and grab." : !won && mdiff > 0.5 ? " — unlucky." : ".");
+  } else verdict = `${B.xg > O.xg ? "Blue" : "Orange"} created the better chances (${signed(Math.abs(B.xg - O.xg))} xG).`;
+
+  const statRow = (label, b, o, dec = 0) => {
+    const tot = Math.max(b + o, 1e-9), lead = b > o ? "b" : o > b ? "o" : "";
+    const v = x => dec ? fmt(x, dec) : x;
+    return `<div class="statrow">
+      <span class="v ${lead === "b" ? "lead" : ""}" ${lead === "b" ? 'style="background:var(--blue)"' : ""}>${v(b)}</span>
+      <div class="bar l"><i style="width:${100 * b / tot}%;background:var(--blue)"></i></div>
+      <span class="k">${label}</span>
+      <div class="bar"><i style="width:${100 * o / tot}%;background:var(--orange)"></i></div>
+      <span class="v r ${lead === "o" ? "lead" : ""}" ${lead === "o" ? 'style="background:var(--orange)"' : ""}>${v(o)}</span></div>`;
+  };
+  // highlights: biggest chance and biggest miss
+  const byXg = d.shots.map((s, i) => [s, i]).sort((a, b) => b[0].xg - a[0].xg);
+  const bigMiss = byXg.find(([s]) => !s.goal);
+  const callBtn = (lbl, [s, i]) => `<button data-shot="${i}"><span class="lbl">${lbl}</span><span class="teamtxt-${s.team}"></span><b>${esc(s.player)}</b> ${fmt(s.xg)} xG · ${resultLabel(s)}</button>`;
+  const winB = d.score.blue > d.score.orange, winO = d.score.orange > d.score.blue;
+
+  $("#main").innerHTML = `
+  <div class="grid">
+    <div class="card hero-card"><div class="hero-strip"></div><div class="hero-in">
+      <div class="hero-top"><span>${dateLabel(d.date)} · ${d.team_size}v${d.team_size} · ${d.source === "upload" ? "uploaded" : "auto-tracked"}</span>
+        <button class="btn ghost" id="delBtn" title="Remove from dashboard">Remove</button></div>
+      <div class="hero">
+        <div class="side"><span class="tname blue">Blue</span><div class="players">${roster("blue")}</div></div>
+        <div class="center">
+          <div class="score"><span class="${winO ? "lose" : "win"}">${d.score.blue}</span><span class="sep">–</span><span class="${winB ? "lose" : "win"}">${d.score.orange}</span></div>
+          <div class="verdict">${verdict}</div>
+        </div>
+        <div class="side r"><span class="tname orange">Orange</span><div class="players">${roster("orange")}</div></div>
+      </div>
+      <div class="statrows">
+        ${statRow("Expected goals (xG)", B.xg, O.xg, 2)}
+        ${statRow("xG on target (xGOT)", B.xgot, O.xgot, 2)}
+        ${statRow("Shots", B.shots, O.shots)}
+        ${statRow("On target", B.on_target, O.on_target)}
+        ${statRow("Big chances", B.big, O.big)}
+        ${statRow("Saves", B.saves, O.saves)}
+      </div>
+      ${byXg.length ? `<div class="callout">${callBtn("Best chance", byXg[0])}${bigMiss && bigMiss !== byXg[0] ? callBtn("Biggest miss", bigMiss) : ""}</div>` : ""}
+    </div></div>
+
+    <div class="card">
+      <div class="card-head"><div><h3>Shot map</h3><p class="sub">Circle size is xG, filled circles are goals. The line shows where the selected shot ended up; the dashed line is where it was heading.</p></div>
+        <div class="filters" id="mapFilters">${[["all", "All"], ["blue", "Blue"], ["orange", "Orange"], ...(me ? [["me", "You"]] : [])].map(([k, l]) => `<button data-f="${k}" class="${state.mapFilter === k ? "on" : ""}">${l}</button>`).join("")}</div></div>
+      <div class="mapwrap">
+        <div id="shotInspector"></div>
+        <div><div id="shotmap"></div>
+          <div class="legend" style="margin-top:10px;justify-content:center">
+            <span><i class="fill" style="background:var(--blue)"></i>Blue attacks →</span><span><i class="fill" style="background:var(--orange)"></i>← Orange attacks</span>
+            <span><i class="ring"></i>No goal</span><span><i class="fill"></i>Goal</span></div></div>
+      </div>
+    </div>
+
+    <div class="card"><h3>xG race</h3><p class="sub">Running total of chance quality. Each step is a shot; big dots are goals. Hover to scrub, click a step to inspect that shot.</p>
+      <div id="timeline"></div></div>
+
+    <div class="card"><h3>Players</h3><p class="sub">xG rates each chance from the moment before the touch, however it was struck. xGOT rates the shot as actually hit, so an open-net miss has high xG but near-zero xGOT. Positive xGOT − xG means you struck your chances better than average.</p>
+      <div class="tablewrap">${playersTable(d)}</div></div>
+    <div class="card"><h3>Shots</h3><p class="sub">Every detected shot, in order. Click a row to inspect it, or ▶ to watch it in 3D.</p>
+      <div class="tablewrap">${shotsTable(d)}</div></div>
+  </div>`;
+  $("#delBtn").onclick = async () => {
+    if (!confirm("Remove this game from the dashboard? The replay file is not deleted.")) return;
+    await api(`/api/matches/${encodeURIComponent(d.replay_id)}`, { method: "DELETE" });
+    state.current = null; state.seen.delete(d.replay_id); loadMatches();
+  };
+  document.querySelectorAll(".callout button").forEach(b => b.onclick = () => { selectShot(d, +b.dataset.shot); $("#shotmap").scrollIntoView({ behavior: "smooth", block: "center" }); });
+  document.querySelectorAll("#mapFilters button").forEach(b => b.onclick = () => { state.mapFilter = b.dataset.f; document.querySelectorAll("#mapFilters button").forEach(x => x.classList.toggle("on", x === b)); drawShotMap(d); });
+  if (state.shotFor !== d.replay_id) { state.shotFor = d.replay_id; state.shotSel = 0; }
+  drawTimeline(d); renderInspector(d); drawShotMap(d); wireShotRows(d);
+}
+
+function playersTable(d) {
+  const rows = [...d.players].sort((a, b) => a.team.localeCompare(b.team) || b.xg - a.xg).map(p => `
+    <tr><td class="l"><span class="teamtxt-${p.team}"></span><b>${esc(p.player)}</b>${p.pid === state.me ? '<span class="you">you</span>' : ""}</td>
+      <td>${p.goals}</td><td><b>${fmt(p.xg)}</b></td><td>${fmt(p.xgot ?? p.xg)}</td><td>${signed(p.goals_minus_xg)}</td><td>${signed(p.shooting ?? 0)}</td>
+      <td>${p.shots}</td><td>${p.on_target}</td><td>${fmt(p.xg_per_shot, 2)}</td><td>${p.big_chances}${p.big_chances_missed ? ` <span class="mmeta">(${p.big_chances_missed} missed)</span>` : ""}</td><td>${p.saves ?? "–"}</td></tr>`).join("");
+  return `<table><thead><tr><th class="l">Player</th><th>Goals</th><th>xG</th><th title="Expected goals on target: the shots as actually struck">xGOT</th><th>G − xG</th><th title="xGOT − xG: above zero means striking chances better than average">Shooting</th><th>Shots</th><th>On target</th><th>xG/shot</th><th title="Shots with xG ≥ 0.5">Big chances</th><th>Saves</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function shotsTable(d) {
+  if (!d.shots.length) return `<p class="mmeta">No shots detected.</p>`;
+  const rows = d.shots.map((s, i) => `
+    <tr data-i="${i}"><td class="l"><button class="playbtn" data-play="${i}" title="Watch in 3D" aria-label="Watch shot in 3D">${PLAY_ICON(10)}</button></td>
+      <td class="l">${clockLabel(s.clock ?? 0)}</td>
+      <td class="l"><span class="teamtxt-${s.team}"></span>${esc(s.player)}</td>
+      <td><span class="xgbar"><span class="track"><span class="fill" style="width:${Math.max(3, s.xg * 100)}%;background:${teamColor(s.team)}"></span></span>${fmt(s.xg, 2)}</span></td>
+      <td>${fmt(s.xgot ?? s.xg, 2)}</td>
+      <td class="l">${resultPill(s)}${s.end_by ? ` <span class="mmeta">by ${esc(s.end_by)}</span>` : ""}</td>
+      <td class="l">${shotKind(s)}</td>
+      <td>${Math.round(s.dist_goal / 100)} m</td><td>${kmh(s.ball_speed)} km/h</td>
+      <td title="Defenders who could reach the ball's path before it reaches goal">${s.n_def_can_intercept}</td></tr>`).join("");
+  return `<table><thead><tr><th class="l"></th><th class="l">Time</th><th class="l">Player</th><th>xG</th><th title="Expected goals on target: the shot as actually struck">xGOT</th><th class="l">Result</th><th class="l">Type</th><th>Distance</th><th>Speed</th><th title="Defenders able to reach the ball path">Defenders in reach</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function shotTip(s) {
+  return `<div class="t"><span class="teamtxt-${s.team}"></span>${esc(s.player)} · ${clockLabel(s.clock ?? 0)}</div>`
+    + row("xG (chance)", fmt(s.xg, 2)) + row("xGOT (as struck)", fmt(s.xgot ?? s.xg, 2)) + row("Result", resultLabel(s) + (s.end_by ? ` (${esc(s.end_by)})` : ""))
+    + row("Type", shotKind(s)) + row("Distance", `${Math.round(s.dist_goal / 100)} m`) + row("Ball speed", `${kmh(s.ball_speed)} km/h`);
+}
+
+// cumulative xG step chart
+function drawTimeline(d) {
+  const host = $("#timeline"); if (!host) return;
+  const W = host.clientWidth || 600, H = 240, m = { l: 36, r: 96, t: 14, b: 26 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const xmax = Math.max(300, d.game_length || 300);
+  const series = {};
+  for (const t of ["blue", "orange"]) {
+    let c = 0; series[t] = [{ c: 0, v: 0 }];
+    d.shots.forEach((s, i) => { if (s.team === t) { c += s.xg; series[t].push({ c: s.clock, v: c, s, i }); } });
+  }
+  const ax = axis(Math.max(series.blue.at(-1).v, series.orange.at(-1).v, 0.5)), ymax = ax.max;
+  const X = c => m.l + (c / xmax) * iw, Y = v => m.t + ih - (v / ymax) * ih;
+  const cumAt = (t, c) => { let v = 0; for (const p of series[t]) { if (p.c <= c) v = p.v; else break; } return v; };
+  let g = `<defs>${["blue", "orange"].map(t => `<linearGradient id="ga-${t}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${teamColor(t)}" stop-opacity=".22"/><stop offset="1" stop-color="${teamColor(t)}" stop-opacity="0"/></linearGradient>`).join("")}</defs>`;
+  for (const v of ax.ticks) {
+    g += `<line x1="${m.l}" x2="${m.l + iw}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--grid)" />`
+      + `<text x="${m.l - 8}" y="${Y(v) + 4}" text-anchor="end">${tickLabel(v)}</text>`;
+  }
+  for (let c = 0; c <= xmax + 0.1; c += 60) g += `<text x="${X(c)}" y="${H - 6}" text-anchor="middle">${clockLabel(c)}</text>`;
+  if (xmax > 300) g += `<line x1="${X(300)}" x2="${X(300)}" y1="${m.t}" y2="${m.t + ih}" stroke="var(--pitch-line)" stroke-dasharray="3 3" /><text x="${X(300) + 4}" y="${m.t + 10}">OT</text>`;
+  const labels = [];
+  for (const t of ["blue", "orange"]) {
+    let p = `M${X(0)},${Y(0)}`;
+    for (const pt of series[t].slice(1)) p += `H${X(pt.c)}V${Y(pt.v)}`;
+    p += `H${X(xmax)}`;
+    g += `<path d="${p}V${Y(0)}H${X(0)}Z" fill="url(#ga-${t})" />`;
+    g += `<path d="${p}" fill="none" stroke="${teamColor(t)}" stroke-width="2.5" stroke-linejoin="round" />`;
+    labels.push({ t, y: Y(series[t].at(-1).v), v: series[t].at(-1).v });
+  }
+  for (const goal of d.goals) {
+    const v = cumAt(goal.team, goal.clock);
+    g += `<circle cx="${X(goal.clock)}" cy="${Y(v)}" r="7" fill="${teamColor(goal.team)}" stroke="var(--surface-1)" stroke-width="2.5" />`;
+  }
+  labels.sort((a, b) => a.y - b.y);
+  if (labels.length === 2 && labels[1].y - labels[0].y < 16) { const mid = (labels[0].y + labels[1].y) / 2; labels[0].y = mid - 8; labels[1].y = mid + 8; }
+  for (const L of labels) g += `<text class="lbl" x="${m.l + iw + 8}" y="${L.y + 4}" style="fill:${teamColor(L.t)}">${L.t === "blue" ? "Blue" : "Orange"} ${fmt(L.v)}</text>`;
+  g += `<line id="xh" x1="0" x2="0" y1="${m.t}" y2="${m.t + ih}" stroke="var(--text-muted)" stroke-width="1" visibility="hidden" />`;
+  g += `<rect id="hit" x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent" style="cursor:pointer" />`;
+  host.innerHTML = `<svg width="${W}" height="${H}" role="img" aria-label="Cumulative xG by team over the match">${g}</svg>`;
+  const hit = host.querySelector("#hit"), xh = host.querySelector("#xh");
+  const nearest = c => d.shots.map((s, i) => [s, i]).filter(([s]) => Math.abs(s.clock - c) < xmax / iw * 10).sort((a, b) => Math.abs(a[0].clock - c) - Math.abs(b[0].clock - c))[0];
+  const clockAt = e => { const r = hit.getBoundingClientRect(); return Math.max(0, Math.min(xmax, (e.clientX - r.left) / r.width * xmax)); };
+  hit.onmousemove = e => {
+    const c = clockAt(e);
+    xh.setAttribute("x1", X(c)); xh.setAttribute("x2", X(c)); xh.setAttribute("visibility", "visible");
+    const near = nearest(c)?.[0];
+    const gl = d.goals.filter(x => Math.abs(x.clock - c) < xmax / iw * 8)[0];
+    showTip(e, `<div class="t">${clockLabel(c)}</div>` + row('<span class="teamtxt-blue"></span>Blue xG', fmt(cumAt("blue", c)))
+      + row('<span class="teamtxt-orange"></span>Orange xG', fmt(cumAt("orange", c)))
+      + (gl ? `<div class="row" style="margin-top:4px"><span>Goal</span><b>${esc(gl.scorer || gl.team)}</b></div>` : "")
+      + (near ? `<div class="row" style="margin-top:4px"><span>Shot · ${esc(near.player)}</span><b>${fmt(near.xg)}</b></div>` + row("Result", resultLabel(near)) : ""));
+  };
+  hit.onmouseleave = () => { xh.setAttribute("visibility", "hidden"); hideTip(); };
+  hit.onclick = e => { const n = nearest(clockAt(e)); if (n) { hideTip(); selectShot(d, n[1]); $("#shotmap").scrollIntoView({ behavior: "smooth", block: "center" }); } };
+}
+
+// Goal-mouth view from the shooter: where the touch was sending the ball.
+// Attacking-frame +x is on the shooter's LEFT, so it is mirrored onto the left.
+function goalMouthSvg(s) {
+  const GX = 1500, GZ = 950, W = 200, H = W * GZ / (2 * GX) + 6;
+  const X = x => (GX - x) / (2 * GX) * W, Z = z => H - 4 - z / GZ * (H - 10), S = v => v / (2 * GX) * W;
+  const post = 893, bar = 643;
+  let g = `<defs><pattern id="net" width="7" height="7" patternUnits="userSpaceOnUse"><path d="M0 0L7 7M7 0L0 7" stroke="var(--pitch-line)" stroke-width=".7"/></pattern></defs>`;
+  g += `<line x1="0" x2="${W}" y1="${Z(0)}" y2="${Z(0)}" stroke="var(--pitch-line)" stroke-width="1.5"/>`;
+  g += `<rect x="${X(post)}" y="${Z(bar)}" width="${S(2 * post)}" height="${Z(0) - Z(bar)}" fill="url(#net)"/>`;
+  g += `<path d="M${X(post)},${Z(0)}V${Z(bar)}H${X(-post)}V${Z(0)}" fill="none" stroke="var(--text-primary)" stroke-width="3" stroke-linejoin="round"/>`;
+  const cx = s.cross_x ?? NaN, cz = s.cross_z;     // games analysed before cross_x existed: no dot
+  if (Number.isFinite(cx) && Number.isFinite(cz)) {
+    const px = Math.max(5, Math.min(W - 5, X(cx))), pz = Math.max(5, Math.min(H - 5, Z(Math.max(cz, 93))));
+    const col = teamColor(s.team);
+    g += `<circle cx="${px}" cy="${pz}" r="${Math.max(5, S(93))}" fill="${s.goal ? col : `color-mix(in srgb, ${col} 25%, var(--surface-2))`}" stroke="${col}" stroke-width="2"/>`;
+  }
+  return `<svg width="${W}" height="${H}" role="img" aria-label="Where the shot was heading at the goal line">${g}</svg>`;
+}
+
+function renderInspector(d) {
+  const host = $("#shotInspector"); if (!host) return;
+  if (!d.shots.length) { host.innerHTML = `<div class="insp mmeta">No shots in this game.</div>`; return; }
+  const i = state.shotSel = Math.max(0, Math.min(d.shots.length - 1, state.shotSel ?? 0));
+  const s = d.shots[i];
+  const kv = (k, v) => `<div class="k">${k}</div><div class="v">${v}</div>`;
+  host.innerHTML = `
+    <div class="insp">
+      <div class="insp-head">
+        <div class="who"><div class="avatar" style="background:${teamColor(s.team)}">${initial(s.player)}</div><span class="n">${esc(s.player)}</span>${s.pid === state.me ? '<span class="you">you</span>' : ""}</div>
+        <div class="nav">
+          <button class="navbtn" id="shotPrev" aria-label="Previous shot" ${i === 0 ? "disabled" : ""}>‹</button>
+          <div class="when"><b>${clockLabel(s.clock ?? 0)}</b><span>${i + 1} / ${d.shots.length}</span></div>
+          <button class="navbtn" id="shotNext" aria-label="Next shot" ${i === d.shots.length - 1 ? "disabled" : ""}>›</button>
+        </div>
+      </div>
+      <div class="kv">
+        ${kv("Result", resultPill(s))}
+        ${s.end_by ? kv(shotOutcome(s) === "saved" ? "Saved by" : "Stopped by", esc(s.end_by)) : ""}
+        ${kv("Shot type", shotKind(s))}${kv("Situation", shotSituation(s))}
+        ${kv("Distance", `${Math.round(s.dist_goal / 100)} m`)}${kv("Ball speed", `${kmh(s.ball_speed)} km/h`)}
+      </div>
+      <div class="gm">
+        ${goalMouthSvg(s)}
+        <div class="nums">
+          <div><b>${fmt(s.xg, 2)}</b><span title="Chance quality from the moment before the touch">xG</span></div>
+          <div><b>${s.xgot == null ? "–" : fmt(s.xgot, 2)}</b><span title="The shot as actually struck">xGOT</span></div>
+        </div>
+      </div>
+      <button class="btn primary watch" id="watch3d">${PLAY_ICON(12)} Watch in 3D</button>
+    </div>`;
+  $("#shotPrev").onclick = () => selectShot(d, i - 1);
+  $("#shotNext").onclick = () => selectShot(d, i + 1);
+  $("#watch3d").onclick = () => openReplay(d.replay_id, i, s, d);
+}
+
+function selectShot(d, i) {
+  if (i < 0 || i >= d.shots.length) return;
+  state.shotSel = i;
+  renderInspector(d); drawShotMap(d);
+  document.querySelectorAll("tr[data-i]").forEach(tr => tr.classList.toggle("sel", +tr.dataset.i === i));
+}
+document.addEventListener("keydown", e => {
+  if (state.replayOpen) return;
+  if (state.view !== "match" || !state.data || !$("#shotInspector")) return;
+  if (e.target.closest && e.target.closest("input, select, textarea")) return;
+  if (e.key === "ArrowLeft") selectShot(state.data, (state.shotSel ?? 0) - 1);
+  else if (e.key === "ArrowRight") selectShot(state.data, (state.shotSel ?? 0) + 1);
+});
+
+// ---------- pitch drawing ----------
+// Rocket League floor: 8192 x 10240 with chamfered corners. +x is on the LEFT looking from blue to orange.
+const FIELD = [[4096, 3968], [2944, 5120], [-2944, 5120], [-4096, 3968], [-4096, -3968], [-2944, -5120], [2944, -5120], [4096, -3968]];
+const BIG_PADS = [[3072, 4096], [-3072, 4096], [3072, -4096], [-3072, -4096], [3584, 0], [-3584, 0]];
+let svgUid = 0;
+// tf(x, y) -> [px, py] maps world coordinates to the picture
+function pitchSvgBase(tf, S, { goals = ["blue", "orange"], stripes = 12, pads = true } = {}) {
+  const id = "pc" + (++svgUid);
+  const poly = FIELD.map(([x, y]) => tf(x, y).map(v => v.toFixed(1)).join(",")).join(" ");
+  let g = `<defs><clipPath id="${id}"><polygon points="${poly}"/></clipPath></defs>`;
+  g += `<polygon points="${poly}" fill="var(--pitch)"/>`;
+  g += `<g clip-path="url(#${id})">`;
+  for (let k = 0; k < stripes; k += 2) {             // mowing stripes across the pitch
+    const y0 = -5120 + k * 10240 / stripes, y1 = y0 + 10240 / stripes;
+    const pts = [tf(4096, y0), tf(-4096, y0), tf(-4096, y1), tf(4096, y1)].map(p => p.join(",")).join(" ");
+    g += `<polygon points="${pts}" fill="var(--pitch-stripe)"/>`;
+  }
+  for (const [t, y0] of [["blue", -5120], ["orange", 5120]]) {   // faint team halves
+    const pts = [tf(4096, 0), tf(-4096, 0), tf(-4096, y0), tf(4096, y0)].map(p => p.join(",")).join(" ");
+    g += `<polygon points="${pts}" fill="var(--${t})" opacity=".05"/>`;
+  }
+  g += `</g>`;
+  g += `<polygon points="${poly}" fill="none" stroke="var(--pitch-line)" stroke-width="1.5"/>`;
+  const L = (a, b) => { const [x1, y1] = tf(...a), [x2, y2] = tf(...b); return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="var(--pitch-line)" stroke-width="1.2"/>`; };
+  g += L([4096, 0], [-4096, 0]);
+  const [cx, cy] = tf(0, 0);
+  g += `<circle cx="${cx}" cy="${cy}" r="${S(1000)}" fill="none" stroke="var(--pitch-line)" stroke-width="1.2"/>`;
+  g += `<circle cx="${cx}" cy="${cy}" r="${Math.max(1.5, S(60))}" fill="var(--pitch-line)"/>`;
+  if (pads) for (const [x, y] of BIG_PADS) { const [px, py] = tf(x, y); g += `<circle cx="${px}" cy="${py}" r="${Math.max(2, S(130))}" fill="none" stroke="var(--pitch-line)" stroke-width="1.2" opacity=".9"/>`; }
+  for (const t of goals) {
+    const y0 = t === "orange" ? 5120 : -5120, sg = Math.sign(y0);
+    // goal box marking in front of the goal and the goal itself behind the line
+    const box = [tf(1800, y0), tf(-1800, y0), tf(-1800, y0 - sg * 1300), tf(1800, y0 - sg * 1300)].map(p => p.join(",")).join(" ");
+    g += `<polyline points="${box}" fill="none" stroke="var(--pitch-line)" stroke-width="1.2"/>`;
+    const goal = [tf(893, y0), tf(893, y0 + sg * 880), tf(-893, y0 + sg * 880), tf(-893, y0)].map(p => p.join(",")).join(" ");
+    g += `<polygon points="${goal}" fill="var(--${t})" fill-opacity=".12" stroke="var(--${t})" stroke-width="2" stroke-linejoin="round"/>`;
+  }
+  return g;
+}
+
+// end-of-shot marker, FotMob style
+function endMarker(kind, x, y, col, size = 6) {
+  const k = KINDS[kind]?.[1];
+  if (kind === "goal") return "";
+  if (k === "stop") return `<circle cx="${x}" cy="${y}" r="${size}" fill="var(--surface-1)" stroke="var(--critical)" stroke-width="2.5"/>`
+    + `<line x1="${x - size * .6}" y1="${y - size * .6}" x2="${x + size * .6}" y2="${y + size * .6}" stroke="var(--critical)" stroke-width="2"/>`;
+  if (k === "frame") return `<rect x="${x - size * .75}" y="${y - size * .75}" width="${size * 1.5}" height="${size * 1.5}" transform="rotate(45 ${x} ${y})" fill="var(--gold)" stroke="var(--surface-1)" stroke-width="1.5"/>`;
+  return `<g stroke="var(--text-secondary)" stroke-width="2.5" stroke-linecap="round"><line x1="${x - size * .7}" y1="${y - size * .7}" x2="${x + size * .7}" y2="${y + size * .7}"/><line x1="${x + size * .7}" y1="${y - size * .7}" x2="${x - size * .7}" y2="${y + size * .7}"/></g>`;
+}
+
+function drawShotMap(d) {
+  const host = $("#shotmap"); if (!host) return;
+  // horizontal pitch: blue goal on the left, orange on the right
+  const W = 1000, XR = 6200, H = W * 8192 / (2 * XR);
+  const tf = (x, y) => [(y + XR) / (2 * XR) * W, (4096 - x) / 8192 * H];
+  const S = v => v / (2 * XR) * W;
+  let g = pitchSvgBase(tf, S);
+  const sel = d.shots.length ? Math.min(state.shotSel ?? 0, d.shots.length - 1) : -1;
+  const f = state.mapFilter;
+  const visible = s => f === "all" || (f === "me" ? s.pid === state.me : s.team === f);
+  const world = (s, x, y) => { const fl = s.team === "blue" ? 1 : -1; return tf(fl * x, fl * y); };
+  if (sel >= 0) {
+    const s = d.shots[sel], [sx, sy] = world(s, s.ball_x, s.ball_y), col = teamColor(s.team);
+    const kind = shotOutcome(s);
+    const hasEnd = Number.isFinite(s.end_x) && Number.isFinite(s.end_y);
+    // where the touch was sending it
+    if (Number.isFinite(s.cross_x) && kind !== "goal") {
+      const [hx, hy] = world(s, s.cross_x, 5120);
+      g += `<line x1="${sx}" y1="${sy}" x2="${hx}" y2="${hy}" stroke="var(--text-muted)" stroke-width="2" stroke-dasharray="6 6" stroke-linecap="round" opacity=".8"/>`;
+    }
+    // where it actually ended
+    const [ex, ey] = hasEnd ? world(s, s.end_x, s.end_y) : Number.isFinite(s.cross_x) ? world(s, s.cross_x, 5120) : [sx, sy];
+    g += `<line x1="${sx}" y1="${sy}" x2="${ex}" y2="${ey}" stroke="${kind === "goal" ? col : "var(--text-primary)"}" stroke-width="3" stroke-linecap="round"/>`;
+    g += endMarker(kind, ex, ey, col, 8);
+  }
+  const order = d.shots.map((s, i) => [s, i]).sort((a, b) => b[0].xg - a[0].xg);
+  const dot = (s, i) => {
+    const [cx, cy] = world(s, s.ball_x, s.ball_y), r = 7 + Math.sqrt(s.xg) * 22, col = teamColor(s.team);
+    const op = visible(s) ? 1 : .12;
+    const ring = i === sel ? `<circle cx="${cx}" cy="${cy}" r="${r + 6}" fill="none" stroke="var(--critical)" stroke-width="3"/>` : "";
+    const body = s.goal
+      ? `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${col}" stroke="var(--surface-1)" stroke-width="2.5"/><circle cx="${cx}" cy="${cy}" r="${Math.max(3, r * .32)}" fill="#fff"/>`
+      : `<circle cx="${cx}" cy="${cy}" r="${r}" fill="color-mix(in srgb, ${col} 28%, var(--pitch))" stroke="${col}" stroke-width="2.5"/>`;
+    return `<g class="shot" data-i="${i}" opacity="${op}">${ring}${body}</g>`;
+  };
+  for (const [s, i] of order) if (i !== sel) g += dot(s, i);
+  if (sel >= 0) g += dot(d.shots[sel], sel);
+  host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Shot locations sized by xG">${g}</svg>`;
+  host.querySelectorAll(".shot").forEach(c => {
+    const i = +c.dataset.i, s = d.shots[i];
+    c.onmousemove = e => { showTip(e, shotTip(s)); highlightRow(i, true); };
+    c.onmouseleave = () => { hideTip(); highlightRow(i, false); };
+    c.onclick = () => { hideTip(); highlightRow(i, false); selectShot(d, i); };
+    c.ondblclick = () => { hideTip(); openReplay(d.replay_id, i, s, d); };
+  });
+}
+
+function highlightRow(i, on) {
+  const tr = document.querySelector(`tr[data-i="${i}"]`); if (tr) tr.classList.toggle("hl", on);
+}
+function wireShotRows(d) {
+  document.querySelectorAll("tr[data-i]").forEach(tr => {
+    const i = +tr.dataset.i;
+    tr.style.cursor = "pointer";
+    tr.onclick = e => { if (e.target.closest(".playbtn")) return; selectShot(d, i); };
+    tr.classList.toggle("sel", i === (state.shotSel ?? 0));
+  });
+  document.querySelectorAll(".playbtn[data-play]").forEach(b => b.onclick = () => { const i = +b.dataset.play; selectShot(d, i); openReplay(d.replay_id, i, d.shots[i], d); });
+}
+
+// ---------- biggest misses ----------
+function missThumb(s) {
+  // attacking half, goal at the top, in the shooter's frame
+  const W = 96, H = W * 6400 / 8192;
+  const tf = (x, y) => [(4096 - x) / 8192 * W, (5900 - y) / 6400 * H];
+  const S = v => v / 8192 * W;
+  let g = pitchSvgBase(tf, S, { goals: ["orange"], stripes: 12, pads: false });
+  const [sx, sy] = tf(s.ball_x, s.ball_y), col = teamColor(s.team);
+  const kind = shotOutcome(s);
+  if (Number.isFinite(s.end_x)) { const [ex, ey] = tf(s.end_x, s.end_y); g += `<line x1="${sx}" y1="${sy}" x2="${ex}" y2="${ey}" stroke="var(--text-primary)" stroke-width="1.5"/>` + endMarker(kind, ex, ey, col, 3.5); }
+  g += `<circle cx="${sx}" cy="${sy}" r="${3 + Math.sqrt(s.xg) * 5}" fill="color-mix(in srgb, ${col} 30%, var(--pitch))" stroke="${col}" stroke-width="1.6"/>`;
+  return `<svg width="${W}" height="${H.toFixed(0)}" viewBox="0 -2 ${W} ${H + 2}" aria-hidden="true" style="border-radius:8px">${g}</svg>`;
+}
+
+async function renderMisses() {
+  const q = new URLSearchParams({ who: state.missWho, limit: 60 });
+  if (state.missScope !== "all") q.set("session", state.missScope);
+  const req = state.missReq = (state.missReq || 0) + 1;
+  const r = await api(`/api/misses?${q}`);
+  if (req !== state.missReq || state.view !== "misses") return;
+  const opts = [`<option value="all">All games</option>`].concat(state.sessions.map(s => `<option value="${s.id}" ${String(state.missScope) === String(s.id) ? "selected" : ""}>${esc(s.name)} (${s.games})</option>`));
+  const rows = r.misses.map((s, k) => {
+    const opp = s.my_team ? s.score[otherTeam(s.team)] : null;
+    return `<div class="card misscard ${k < 3 ? "top" : ""}">
+      <div class="rank">${k + 1}</div>
+      <div class="thumb">${missThumb(s)}</div>
+      <div class="info">
+        <div class="t"><span class="teamtxt-${s.team}"></span>${esc(s.player)}${s.pid === r.me ? '<span class="you">you</span>' : ""} ${resultPill(s)}${s.end_by ? `<span class="mmeta">by ${esc(s.end_by)}</span>` : ""}</div>
+        <div class="big">${fmt(s.xg, 2)}<small>xG</small> <small style="margin-left:10px">${fmt(s.xgot ?? 0, 2)} xGOT</small></div>
+        <div class="xgmeter"><i style="width:${Math.max(2, s.xg * 100)}%;background:${teamColor(s.team)}"></i></div>
+        <div class="mmeta">${clockLabel(s.clock ?? 0)} · ${dateLabel(s.date)} · final score ${s.score.blue}–${s.score.orange} · ${Math.round(s.dist_goal / 100)} m out</div>
+      </div>
+      <div class="acts">
+        <button class="btn primary" data-watch="${k}">${PLAY_ICON(10)} Watch</button>
+        <button class="btn" data-open="${k}">Open match</button>
+      </div></div>`;
+  }).join("");
+  $("#main").innerHTML = `<div class="grid">
+    <div class="card scopebar"><h2>Biggest misses</h2>
+      <span class="mmeta">The best chances that didn't go in, ranked by xG. ${r.misses.length ? "" : "None yet."}</span>
+      <div class="filters" id="missWho"><button data-w="me" class="${state.missWho === "me" ? "on" : ""}">You</button><button data-w="all" class="${state.missWho === "all" ? "on" : ""}">Everyone</button></div>
+      <select class="btn" id="missScope" aria-label="Which games">${opts.join("")}</select></div>
+    <div class="misses">${rows || `<div class="card empty" style="margin:0 auto"><h2>No misses here</h2><p>Unscored chances show up here once games are analysed.</p></div>`}</div></div>`;
+  document.querySelectorAll("#missWho button").forEach(b => b.onclick = () => { state.missWho = b.dataset.w; renderMisses(); });
+  $("#missScope").onchange = e => { state.missScope = e.target.value; renderMisses(); };
+  document.querySelectorAll("[data-watch]").forEach(b => b.onclick = () => { const s = r.misses[+b.dataset.watch]; openReplay(s.match_id, s.idx, s, null); });
+  document.querySelectorAll("[data-open]").forEach(b => b.onclick = () => {
+    const s = r.misses[+b.dataset.open];
+    state.view = "match"; document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.view === "match"));
+    openMatch(s.match_id, true, s.idx);
+  });
+}
+
+// ---------- 3D replay ----------
+async function openReplay(matchId, idx, shot, match) {
+  hideTip();
+  try {
+    const mod = await import("/static/replay3d.js");
+    state.replayOpen = true;
+    await mod.openReplay({
+      host: $("#r3d"), matchId, idx, shot, match,
+      colors: { blue: css("--blue"), orange: css("--orange") },
+      label: resultLabel(shot), clock: clockLabel(shot.clock ?? 0),
+      onClose: () => { state.replayOpen = false; },
+    });
+  } catch (e) {
+    state.replayOpen = false;
+    toast(e.status === 404 ? "No 3D clip for this shot yet. Older games get one when the dashboard re-analyses them on start-up."
+      : `Couldn't open the 3D view: ${esc(e.message || e)}`, 6000);
+  }
+}
+
+// ---------- trends ----------
+function scopeBar() {
+  if (state.scope == null) state.scope = state.activeSession ? state.activeSession.id : "all";
+  const fmtS = s => `${esc(s.name)} (${s.games} game${s.games === 1 ? "" : "s"}${s.ended_at ? "" : ", live"})`;
+  const opts = [`<option value="all" ${state.scope === "all" ? "selected" : ""}>All games</option>`]
+    .concat(state.sessions.map(s => `<option value="${s.id}" ${state.scope === s.id ? "selected" : ""}>${fmtS(s)}</option>`));
+  const cur = state.sessions.find(s => s.id === state.scope);
+  const when = cur ? `${new Date(cur.started_at * 1000).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`
+    + (cur.ended_at ? ` – ${new Date(cur.ended_at * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}` : " · in progress") : "every analysed game";
+  return `<div class="card scopebar"><h2>Trends</h2><span class="mmeta">${when}</span>
+    <select class="btn" id="scopeSel" aria-label="Which games">${opts.join("")}</select>
+    ${cur ? `<button class="btn ghost" id="renameSess">Rename</button><button class="btn ghost" id="delSess">Forget session</button>` : ""}</div>`;
+}
+function wireScopeBar() {
+  $("#scopeSel").onchange = e => { state.scope = e.target.value === "all" ? "all" : +e.target.value; renderTrends(); };
+  const cur = state.sessions.find(s => s.id === state.scope);
+  if ($("#renameSess")) $("#renameSess").onclick = async () => {
+    const name = prompt("Rename session", cur.name); if (!name) return;
+    await api(`/api/sessions/${cur.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+    await loadSessions(); renderTrends();
+  };
+  if ($("#delSess")) $("#delSess").onclick = async () => {
+    if (!confirm("Forget this session? Its games stay in your history.")) return;
+    await api(`/api/sessions/${cur.id}`, { method: "DELETE" });
+    state.scope = "all"; await loadSessions(); renderTrends();
+  };
+}
+
+function renderTrends() {
+  const inScope = m => state.scope === "all" || state.scope == null || m.session_id === state.scope;
+  if (state.scope == null) state.scope = state.activeSession ? state.activeSession.id : "all";
+  const games = state.matches.filter(m => m.me && inScope(m)).slice().reverse();     // chronological
+  if (!games.length) {
+    $("#main").innerHTML = `<div class="grid">${scopeBar()}<div class="card empty" style="margin:0 auto">
+      <h2>No games here yet</h2><p>${state.scope === "all" ? "Analysed games will show up here." : "Games you play while this session is running will appear here as soon as they're analysed."}</p></div></div>`;
+    wireScopeBar(); return;
+  }
+  const n = games.length, sum = f => games.reduce((a, m) => a + f(m), 0);
+  const xg = sum(m => m.me.xg), goals = sum(m => m.me.goals), shots = sum(m => m.me.shots);
+  const xgot = sum(m => m.me.xgot ?? m.me.xg);
+  const teamDiff = sum(m => m.xg[m.me.team] - m.xg[otherTeam(m.me.team)]);
+  const wins = games.filter(m => resultFor(m) === "w").length;
+  const name = games.at(-1).me.player;
+  const tile = (k, v, dsc) => `<div class="card tile"><div class="k">${k}</div><div class="v">${v}</div><div class="d">${dsc}</div></div>`;
+  $("#main").innerHTML = `<div class="grid">
+    ${scopeBar()}
+    <div class="tiles">
+      ${tile("Games", n, `${wins} won (${Math.round(100 * wins / n)}%)`)}
+      ${tile("xG per game", fmt(xg / n), `${fmt(xg, 1)} total`)}
+      ${tile("Goals per game", fmt(goals / n), `${goals} total`)}
+      ${tile("Finishing (G − xG)", signed(goals - xg, 1), goals >= xg ? "scoring more than expected" : "scoring less than expected")}
+      ${tile("Shooting (xGOT − xG)", signed(xgot - xg, 1), xgot >= xg ? "striking chances better than average" : "striking chances worse than average")}
+      ${tile("xG per shot", fmt(shots ? xg / shots : 0), `${fmt(shots / n, 1)} shots per game`)}
+      ${tile("Team xG diff / game", signed(teamDiff / n), "your team minus opponents")}
+    </div>
+    <div class="card"><h3>${esc(name)}: xG and goals per game</h3><p class="sub">Oldest on the left. Bars are xG, dots are actual goals.</p>
+      <div class="legend" style="margin-bottom:6px"><span><i style="background:var(--blue)"></i>xG</span><span><i class="fill" style="background:var(--text-primary)"></i>Goals</span></div>
+      <div id="perGame"></div></div>
+    <div class="card"><h3>Finishing over time</h3><p class="sub">Running total of goals minus xG. Rising means finishing above expectation.</p>
+      <div id="finishing"></div></div>
+  </div>`;
+  wireScopeBar(); drawPerGame(games); drawFinishing(games);
+}
+
+function drawPerGame(games) {
+  const host = $("#perGame"), W = host.clientWidth || 600, H = 220, m = { l: 32, r: 12, t: 10, b: 24 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b, n = games.length;
+  const ax = axis(Math.max(...games.map(g => Math.max(g.me.xg, g.me.goals)), 1)), ymax = ax.max;
+  const bw = Math.max(3, Math.min(28, iw / n - 2)), X = i => m.l + (i + .5) * iw / n, Y = v => m.t + ih - v / ymax * ih;
+  let g = "";
+  for (const v of ax.ticks) g += `<line x1="${m.l}" x2="${m.l + iw}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--grid)"/><text x="${m.l - 6}" y="${Y(v) + 4}" text-anchor="end">${tickLabel(v)}</text>`;
+  games.forEach((gm, i) => {
+    const h = Math.max(0, Y(0) - Y(gm.me.xg)), x = X(i) - bw / 2, r = Math.min(4, bw / 2, h);
+    g += `<path d="M${x},${Y(0)}V${Y(0) - h + r}Q${x},${Y(0) - h} ${x + r},${Y(0) - h}H${x + bw - r}Q${x + bw},${Y(0) - h} ${x + bw},${Y(0) - h + r}V${Y(0)}Z" fill="var(--blue)" />`;
+    if (gm.me.goals > 0) g += `<circle cx="${X(i)}" cy="${Y(gm.me.goals)}" r="4" fill="var(--text-primary)" stroke="var(--surface-1)" stroke-width="2"/>`;
+    g += `<rect class="hitb" data-i="${i}" x="${m.l + i * iw / n}" y="${m.t}" width="${iw / n}" height="${ih}" fill="transparent"/>`;
+  });
+  const step = Math.ceil(n / 10);
+  games.forEach((gm, i) => { if (i % step === 0) g += `<text x="${X(i)}" y="${H - 6}" text-anchor="middle">${i + 1}</text>`; });
+  host.innerHTML = `<svg width="${W}" height="${H}" role="img" aria-label="xG and goals per game">${g}</svg>`;
+  host.querySelectorAll(".hitb").forEach(r => {
+    const gm = games[+r.dataset.i];
+    r.style.cursor = "pointer";
+    r.onmousemove = e => showTip(e, `<div class="t">Game ${+r.dataset.i + 1} · ${dateLabel(gm.date)}</div>` + row("xG", fmt(gm.me.xg)) + row("Goals", gm.me.goals) + row("Shots", gm.me.shots) + row("Score", `${gm.score[gm.me.team]}–${gm.score[otherTeam(gm.me.team)]}`));
+    r.onmouseleave = hideTip;
+    r.onclick = () => { hideTip(); state.current = gm.id; setView("match"); };
+  });
+}
+
+function drawFinishing(games) {
+  const host = $("#finishing"), W = host.clientWidth || 600, H = 180, m = { l: 36, r: 12, t: 10, b: 24 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b, n = games.length;
+  let c = 0; const pts = games.map(g => (c += g.me.goals - g.me.xg));
+  const lim = axis(Math.max(1, ...pts.map(Math.abs)), 1).max;
+  const X = i => m.l + (n === 1 ? iw / 2 : i / (n - 1) * iw), Y = v => m.t + ih / 2 - v / lim * ih / 2;
+  let g = "";
+  for (const v of [-lim, 0, lim]) g += `<line x1="${m.l}" x2="${m.l + iw}" y1="${Y(v)}" y2="${Y(v)}" stroke="${v === 0 ? "var(--pitch-line)" : "var(--grid)"}"/><text x="${m.l - 6}" y="${Y(v) + 4}" text-anchor="end">${signed(v, v % 1 ? 1 : 0)}</text>`;
+  g += `<path d="${pts.map((v, i) => `${i ? "L" : "M"}${X(i)},${Y(v)}`).join("")}" fill="none" stroke="var(--blue)" stroke-width="2.5" stroke-linejoin="round"/>`;
+  g += `<circle cx="${X(n - 1)}" cy="${Y(pts.at(-1))}" r="4" fill="var(--blue)" stroke="var(--surface-1)" stroke-width="2"/>`;
+  g += `<line id="fxh" y1="${m.t}" y2="${m.t + ih}" stroke="var(--text-muted)" visibility="hidden"/><rect id="fhit" x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent"/>`;
+  host.innerHTML = `<svg width="${W}" height="${H}" role="img" aria-label="Cumulative goals minus xG">${g}</svg>`;
+  const hit = host.querySelector("#fhit"), xh = host.querySelector("#fxh");
+  hit.onmousemove = e => {
+    const r = hit.getBoundingClientRect(), i = Math.max(0, Math.min(n - 1, Math.round((e.clientX - r.left) / r.width * (n - 1))));
+    xh.setAttribute("x1", X(i)); xh.setAttribute("x2", X(i)); xh.setAttribute("visibility", "visible");
+    showTip(e, `<div class="t">After game ${i + 1}</div>` + row("Goals − xG", signed(pts[i])) + row("This game", signed(games[i].me.goals - games[i].me.xg)));
+  };
+  hit.onmouseleave = () => { xh.setAttribute("visibility", "hidden"); hideTip(); };
+}
+
+// ---------- uploads ----------
+async function uploadFiles(files) {
+  const list = [...files].filter(f => f.name.toLowerCase().endsWith(".replay"));
+  if (!list.length) { toast("Only .replay files can be analysed."); return; }
+  let queued = 0, dup = 0, failed = 0;
+  for (const f of list) {
+    const fd = new FormData(); fd.append("file", f, f.name);
+    try {
+      const r = await fetch("/api/upload", { method: "POST", body: fd });
+      if (r.status === 201) queued++; else if (r.status === 409) dup++; else failed++;
+    } catch { failed++; }
+  }
+  toast(`${queued} replay${queued === 1 ? "" : "s"} queued${dup ? `, ${dup} already analysed` : ""}${failed ? `, ${failed} failed` : ""}.`);
+}
+$("#uploadBtn").onclick = () => $("#fileIn").click();
+$("#fileIn").onchange = e => { uploadFiles(e.target.files); e.target.value = ""; };
+let dragDepth = 0;
+addEventListener("dragenter", e => { if (e.dataTransfer?.types?.includes("Files")) { dragDepth++; $("#drop").style.display = "grid"; } });
+addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; $("#drop").style.display = "none"; } });
+addEventListener("dragover", e => e.preventDefault());
+addEventListener("drop", e => { e.preventDefault(); dragDepth = 0; $("#drop").style.display = "none"; uploadFiles(e.dataTransfer.files); });
+
+// ---------- status, live events, settings ----------
+function renderStatus(s) {
+  const busy = s.queue > 0;
+  const w = s.watching.length ? `watching ${s.watching.length} folder${s.watching.length > 1 ? "s" : ""}` : "not watching folders";
+  $("#status").innerHTML = `<span class="dot ${busy ? "busy" : ""}"></span><span>${busy ? `analysing${s.current ? " " + esc(s.current.slice(0, 12)) + "…" : ""} · ${s.queue} in queue` : `ready · ${w}`}</span>`;
+  $("#status").title = s.watching.join("\n");
+}
+function connect() {
+  const es = new EventSource("/api/events");
+  es.addEventListener("status", e => {
+    state.status = JSON.parse(e.data); renderStatus(state.status);
+    if ((state.status.session?.id ?? null) !== (state.activeSession?.id ?? null)) loadSessions();
+  });
+  es.addEventListener("match", async e => {
+    const ev = JSON.parse(e.data);
+    if (ev.deleted) return;
+    if (ev.rescored) {                     // re-analysed an old game: refresh quietly (not while watching a replay)
+      clearTimeout(state.rescoreTimer);
+      state.rescoreTimer = setTimeout(() => { if (!state.replayOpen) loadMatches(); }, 1500);
+      return;
+    }
+    const wasEmpty = !state.matches.length;
+    await loadMatches(true); loadPlayers(); loadSessions();
+    const m = state.matches.find(x => x.id === ev.id);
+    const backfilling = (state.status?.queue ?? 0) > 1;
+    if (m && !wasEmpty && !backfilling) toast(`New game analysed: <b>${m.score.blue}–${m.score.orange}</b>, xG ${fmt(m.xg.blue)}–${fmt(m.xg.orange)}`);
+  });
+  es.addEventListener("file", e => { const f = JSON.parse(e.data); if (f.status === "error") toast(`Couldn't analyse ${esc(f.path.split(/[\\/]/).pop())}: ${esc(f.reason)}`, 7000); });
+  es.onerror = () => { $("#status").innerHTML = `<span class="dot off"></span><span>disconnected · retrying</span>`; };
+}
+$("#me").onchange = async e => { await api("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ me: e.target.value }) }); loadMatches(); };
+document.querySelectorAll(".tab").forEach(t => t.onclick = () => setView(t.dataset.view));
+$("#setupBtn").onclick = async () => {
+  const s = await api("/api/status");
+  $("#rpUrl").textContent = `${location.origin}/api`;
+  const rp = s.rockpload || {};
+  $("#rpStatus").innerHTML = !rp.bundled ? "Not bundled: put the Windows build in <code>tools/rockpload/</code>."
+    : rp.running ? "✔ Running." : "Installed but not running: restart the dashboard to start it.";
+  $("#watchList").innerHTML = s.watching.map(w => `<div>• ${esc(w)}</div>`).join("") || "<div>none</div>";
+  $("#recentFiles").innerHTML = s.recent_files.map(f => `<div>${esc(f.status)} · ${esc(f.path.split(/[\\/]/).pop())}${f.reason ? " — " + esc(f.reason) : ""}</div>`).join("") || "<div>none yet</div>";
+  $("#setup").showModal();
+};
+$("#themeBtn").onclick = () => {
+  const cur = document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  const next = cur === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("rlxg-theme", next); } catch {}
+  if (state.view === "trends") renderTrends(); else if (state.view === "misses") renderMisses(); else if (state.data) renderMatch(state.data);
+};
+try { const t = localStorage.getItem("rlxg-theme"); if (t) document.documentElement.dataset.theme = t; } catch {}
+let rz; addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { if (state.view === "trends") renderTrends(); else if (state.view === "match" && state.data) drawTimeline(state.data); }, 150); });
+
+loadSessions().then(loadMatches).then(loadPlayers).catch(() => renderEmpty());
+connect();
+</script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+# environment
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+.claude/
+
+# replays, parse caches, shot tables and dashboard history (tens of GB, rebuilt by scripts/)
+data/
+
+# only the current model is published
+models/*
+!models/xg_model.joblib
+
+# third-party binaries (download separately, see tools/rockpload/README.md)
+tools/rockpload/*
+!tools/rockpload/README.md
+
+# local working notes
+HANDOVER.md

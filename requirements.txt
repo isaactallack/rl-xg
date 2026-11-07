@@ -1,0 +1,15 @@
+subtr-actor-py==1.5.1
+numpy>=2.0
+pandas>=2.2
+scikit-learn>=1.5
+lightgbm>=4.5
+joblib>=1.4
+# dashboard
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+# data download
+requests>=2.31
+kagglehub>=0.3
+# README figures (docs/make_figures.py, optional)
+# matplotlib>=3.8
