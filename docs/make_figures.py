@@ -25,6 +25,7 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Polygon, Rectangle
 
 from rlxg import physics as ph
+from rlxg import rsim
 from rlxg.analyze import get_model
 from rlxg.parse import load_replay
 from rlxg.shots import SHOT_X_MARGIN, SHOT_Z_MARGIN, candidate_touches, extract_shots
@@ -136,7 +137,8 @@ def fig_touch_to_shot(replay_path: str):
 
     flip = np.array([1, 1, 1.0]) if shot_touch.team == 0 else np.array([-1, -1, 1.0])
     pf = min(shot_touch.post_frame, rep.n_frames - 1)
-    pred = ph.predict((rep.ball_pos[pf] * flip)[None], (rep.ball_vel[pf] * flip)[None], 5.0)
+    pred = rsim.predict((rep.ball_pos[pf] * flip)[None], (rep.ball_vel[pf] * flip)[None],
+                        (np.nan_to_num(rep.ball_ang_vel[pf]) * flip)[None], 5.0)
     path = pred.samples[0] * flip
     path = path[np.isfinite(path).all(1)]
 
@@ -288,6 +290,8 @@ LABELS = {
     "ball_speed": "ball speed", "nearest_def_ball": "nearest defender to the ball", "cross_speed": "speed at the goal line",
     "shooter_facing_goal": "shooter facing goal", "shooter_speed": "shooter speed", "ball_y": "ball distance up the pitch",
     "gk_d_cross": "goalkeeper distance to the crossing point", "pre_ball_speed": "ball speed before the touch",
+    "sim_p_goal": "RocketSim: share of runs that go in", "sim_goal": "RocketSim: goes in unaided",
+    "sim_frame": "RocketSim: hits post / bar", "ball_spin": "ball spin",
 }
 
 
@@ -315,7 +319,7 @@ def fig_importance(model, top=12):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--shots", default=str(ROOT / "data" / "shots_v4.csv"))
+    ap.add_argument("--shots", default=str(ROOT / "data" / "shots.csv"))
     ap.add_argument("--replay", required=True)
     a = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)

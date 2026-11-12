@@ -234,6 +234,18 @@ def pull(args) -> None:
     print("done")
 
 
+def status(args) -> None:
+    """How many replays the Azure container holds, how far back it has got, and their size."""
+    blob = blob_store()
+    n = size = 0
+    for b in blob.client.list_blobs():
+        if b.name.endswith(".replay"):
+            n += 1
+            size += b.size
+    state = json.loads(blob.get(STATE) or b"{}")
+    print(f"{n} replays, {size / 1e9:.1f} GB; reached back to {state.get('before') or '-'}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd")
@@ -250,13 +262,14 @@ def main():
     f.add_argument("-o", "--out", default=str(DEFAULT_OUT), help="local folder (when not --blob)")
     p = sub.add_parser("pull", help="copy replays from the Azure container to the local folder")
     p.add_argument("-o", "--out", default=str(DEFAULT_OUT))
+    sub.add_parser("status", help="count the replays in the Azure container")
     argv = sys.argv[1:]
-    if not argv or argv[0] not in ("fetch", "pull", "-h", "--help"):
+    if not argv or argv[0] not in ("fetch", "pull", "status", "-h", "--help"):
         argv = ["fetch"] + argv               # old usage: download_ballchasing.py -n 1000
     args = ap.parse_args(argv)
     if args.cmd == "fetch" and args.max_files:
         args.count = min(args.count, args.max_files)
-    (pull if args.cmd == "pull" else fetch)(args)
+    {"pull": pull, "status": status}.get(args.cmd, fetch)(args)
 
 
 if __name__ == "__main__":

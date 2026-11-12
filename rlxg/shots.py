@@ -4,10 +4,10 @@ Definitions
 -----------
 * Candidate touch: the *last* touch of a run of consecutive touches by the same
   player (so a dribble/carry counts once, at the touch that releases the ball).
-* Shot: a candidate whose predicted free-flight trajectory (gravity, drag,
-  bounces; see physics.py) reaches the opponent's goal plane within the horizon,
-  crossing inside the goal mouth plus a margin (so near-misses count as
-  off-target shots). Selection never looks at the outcome, so there is no
+* Shot: a candidate whose predicted free-flight trajectory (RocketSim: the real
+  arena, goal frame and ball spin; see rsim.py) reaches the opponent's end within
+  the horizon, arriving inside the goal mouth plus a margin (so near-misses count
+  as off-target shots). Selection never looks at the outcome, so there is no
   label leakage.
 * Setups are not shots: if the shooting team's own next touch comes before the
   ball would have reached the goal line (the shooter dribbling on, a teammate
@@ -29,7 +29,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from . import defence
 from . import physics as ph
+from . import rsim
+from . import situation
 from .parse import Replay
 from .touches import Touch, detect_touches, quat_to_matrix
 
@@ -107,13 +110,15 @@ def extract_shots(rep: Replay, touches: list[Touch] | None = None) -> pd.DataFra
     flips = np.array([_flip(touches[i].team) for i in cand])
     bpos = rep.ball_pos[post] * flips
     bvel = rep.ball_vel[post] * flips
+    # spin turns with the half-turn into the attacking frame exactly like velocity does
+    bang = np.nan_to_num(rep.ball_ang_vel[post] * flips) if rep.ball_ang_vel is not None else np.zeros_like(bvel)
     ok = np.isfinite(bpos).all(1) & np.isfinite(bvel).all(1)
     cand = [c for c, k in zip(cand, ok) if k]
-    post, flips, bpos, bvel = post[ok], flips[ok], bpos[ok], bvel[ok]
+    post, flips, bpos, bvel, bang = post[ok], flips[ok], bpos[ok], bvel[ok], bang[ok]
     if not cand:
         return pd.DataFrame()
 
-    pred = ph.predict(bpos, bvel, HORIZON)
+    pred = rsim.predict(bpos, bvel, bang, HORIZON)
     is_shot = (pred.reaches_goal_plane
                & (np.abs(pred.cross_x) < ph.GOAL_HALF_W + SHOT_X_MARGIN)
                & (pred.cross_z < ph.GOAL_H + SHOT_Z_MARGIN)
@@ -123,7 +128,10 @@ def extract_shots(rep: Replay, touches: list[Touch] | None = None) -> pd.DataFra
         ti = cand[k]
         if ti + 1 < len(touches):
             nxt = touches[ti + 1]
-            if nxt.team == touches[ti].team and nxt.time - touches[ti].time < pred.time_to_goal[k] + FOLLOWUP_SLACK:
+            # a shot RocketSim says had already missed (wide, over, off the frame) on arrival is
+            # finished there: a follow-up after that is a rebound, so no slack
+            slack = 0.0 if pred.sim_kind[k] in rsim.END_KINDS else FOLLOWUP_SLACK
+            if nxt.team == touches[ti].team and nxt.time - touches[ti].time < pred.time_to_goal[k] + slack:
                 is_shot[k] = False
 
     pidx ={p.pid: j for j, p in enumerate(rep.players)}
@@ -191,6 +199,24 @@ def extract_shots(rep: Replay, touches: list[Touch] | None = None) -> pd.DataFra
                             float(np.linalg.norm(ppos - aim)) / vmax))
         # defenders behind the ball (projection at the ball end) can't block the shot line
         seg_def.sort(key=lambda d: d[0] + (5.0 if d[2] <= 0.02 else 0.0))
+
+        # ---- kinematic intercept (defence.py): velocity, facing, ball height, jump/aerial
+        opp_state = []
+        for p in opp:
+            oq = p.quat[f]
+            rot = quat_to_matrix(oq[None])[0] if np.isfinite(oq).all() else np.full((3, 3), np.nan)
+            opp_state.append(dict(
+                pos=p.pos[f] * flip, vel=p.vel[f] * flip, fwd=rot[:, 0] * flip, up=rot[:, 2] * flip,
+                boost=float(p.boost[f]) if np.isfinite(p.boost[f]) else 33.0,
+                jumped=bool(p.jump[f] or p.double_jump[f] or p.dodge[f])))
+        chance_t = float(np.linalg.norm(aim - pb)) / max(pre_speed, 1500.0)
+        kin = defence.defence_features(opp_state, traj, st, "k")
+        kin.update(defence.defence_features(opp_state, *defence.straight_path(pb, aim, chance_t), "ck"))
+        # ---- goal-mouth coverage, pressure, recent movement, game state (situation.py)
+        kin.update(situation.goal_coverage(opp_state, pb, pre_speed))
+        kin.update(situation.pressure(opp_state, pb))
+        kin.update(situation.history(rep, f, flip, sp, team))
+        kin.update(situation.game_state(rep, f, team))
 
         # ---- defenders / attackers ---------------------------------------
         defs, atts = [], []
@@ -260,6 +286,13 @@ def extract_shots(rep: Replay, touches: list[Touch] | None = None) -> pd.DataFra
             time_to_goal=float(pred.time_to_goal[k]),
             cross_speed=float(pred.cross_speed[k]),
             n_bounces=int(pred.bounces[k]),
+            ball_spin=float(np.linalg.norm(bang[k])),
+            # what RocketSim says happens if nobody touches it again
+            sim_kind=pred.sim_kind[k],
+            sim_goal=float(pred.sim_goal[k]),
+            sim_frame=float(pred.sim_kind[k] in ("post", "bar")),
+            sim_time=float(pred.sim_time[k]),
+            sim_p_goal=rsim.p_goal(bpos[k], bvel[k], bang[k], HORIZON, seed=f"{rep.replay_id}:{f}"),
             # ---- pre-touch situation (chance xG)
             pre_ball_vx_to_centre=float(-np.sign(pb[0]) * pv[0]), pre_ball_vy=float(pv[1]),
             pre_ball_vz=float(pv[2]), pre_ball_speed=pre_speed,
@@ -312,5 +345,6 @@ def extract_shots(rep: Replay, touches: list[Touch] | None = None) -> pd.DataFra
             n_att=len(atts),
             mate_d_goal=min((a["d_goal"] for a in atts), default=8000.0),
             mate_d_ball=min((a["d_ball"] for a in atts), default=8000.0),
+            **kin,
         ))
     return pd.DataFrame(rows)

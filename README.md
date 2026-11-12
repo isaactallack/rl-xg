@@ -9,7 +9,7 @@ Every shot gets two numbers:
 - **xG (chance quality):** how good the chance was *before* the touch, from where the ball, shooter and defenders were. An open net you miss is still a big chance.
 - **xGOT (xG on target):** how likely the shot was to score *as struck*, from where the touch actually sent the ball. **xGOT − xG** shows how well a player strikes their chances.
 
-The model is trained on about **387,000 shots from 16,000 ranked 2v2 games**. On games it never saw, its xGOT is within 2% of the real goal count, with an AUC of 0.94.
+The model is trained on about **387,000 shots from 16,000 ranked 2v2 games**. On games it never saw, its xGOT is within 3% of the real goal count, with an AUC of 0.95.
 
 > This rebuilds [**sertalpbilal/rocket_league_analytics**](https://github.com/sertalpbilal/rocket_league_analytics), the original Rocket League xG project, on a modern replay parser. It adds physics-based shot detection, richer features and about 35× more data. See [Credits](#credits).
 
@@ -32,6 +32,8 @@ cd rl-xg
 python -m venv .venv
 .venv/Scripts/pip install -r requirements.txt      # macOS/Linux: .venv/bin/pip
 ```
+
+Ball paths are simulated with [RocketSim](https://github.com/ZealanL/RocketSim), which needs the arena's collision meshes. They're game files, so they aren't in this repo: dump them from your own copy of Rocket League with [RLArenaCollisionDumper](https://github.com/ZealanL/RLArenaCollisionDumper) and put the `collision_meshes` folder at `data/collision_meshes` (or set `RS_COLLISION_MESHES` to wherever it is).
 
 The trained model (`models/xg_model.joblib`) is in the repo, so you can score replays straight away:
 
@@ -74,13 +76,15 @@ A `.replay` file is a network recording of the match, not a video. Training uses
 
 Replays don't reliably record who touched the ball, so touches are rebuilt from physics. A **touch** is a jump in ball velocity that gravity can't explain (> 120 uu/s) while a car's **oriented hitbox** is in contact range. Impulses from the same player within 0.12 s merge into one touch.
 
-### ④ Shots: [`rlxg/shots.py`](rlxg/shots.py) + [`rlxg/physics.py`](rlxg/physics.py)
+### ④ Shots: [`rlxg/shots.py`](rlxg/shots.py) + [`rlxg/rsim.py`](rlxg/rsim.py)
 
 Not every touch is a shot. A dribble is many touches, and a clearance isn't a shot at all. So:
 
 1. **One candidate per carry.** Consecutive touches by the same player form a carry. Only the touch that *releases* the ball counts.
-2. **Simulate the ball.** From the ball's state just after that touch, a small physics model plays the ball forward for 5 s, with gravity, drag and bounces off the floor and walls (with friction).
-3. **Does it reach the goal?** If the simulated ball crosses the goal line inside the goal mouth plus a margin (500 uu wide, 250 uu over), it's a shot. The margin keeps near-misses as off-target shots instead of dropping them.
+2. **Simulate the ball.** From the ball's state just after that touch, including its **spin**, [RocketSim](https://github.com/ZealanL/RocketSim) plays it forward for 5 s in the real arena: ramps, curved walls, the posts and crossbar. Nothing else is in the arena, so this is where the ball goes if nobody touches it again.
+3. **Does it reach the goal?** If the simulated ball arrives at the goal end inside the goal mouth plus a margin (500 uu wide, 250 uu over), it's a shot. The margin keeps near-misses as off-target shots instead of dropping them.
+
+Spin matters most on bounces. A ball struck with sidespin loses much of its sideways speed when it lands, so a flat-plane model without spin drifts by up to a ball width over a bouncing shot. On shots nobody touched again, RocketSim gets goal or no goal right 98% of the time (a spinless flat-plane model: 94%) and recognises about 93% of post and crossbar hits ([`scripts/compare_physics.py`](scripts/compare_physics.py)).
 
 ![Touch detection and shot selection on a real goal](docs/img/fig_touch_to_shot.png)
 
@@ -100,16 +104,18 @@ A shot is a **goal** if the shooting team scores before any of its players touch
 
 ### ⑥ Features: [`rlxg/shots.py`](rlxg/shots.py)
 
-Everything is computed in the **attacking frame** (the target goal is always at +y, mirrored left/right), so the model doesn't depend on team colour or which side of the pitch the shot came from. There are about 50 features per shot, in two groups:
+Everything is computed in the **attacking frame** (the target goal is always at +y, mirrored left/right), so the model doesn't depend on team colour or which side of the pitch the shot came from. There are about 150 features per shot, in two groups:
 
 | Group | Before the touch (chance xG) | After the touch (xGOT) |
 |---|---|---|
 | Ball | position, height, velocity, distance and angle to goal | speed and direction just after contact, strength of the touch |
-| Trajectory | — | predicted crossing point, margin inside the posts/bar, time to goal, bounces |
+| Trajectory | — | predicted crossing point, margin inside the posts/bar, time to goal, bounces, spin; whether the simulated ball **goes in unaided** or **hits the frame**, and P(goal) over 16 slightly perturbed copies of the start state |
 | Shooter | approach speed, facing goal/ball, boost, airborne, dodge, how long they've had the ball | same |
 | Build-up | time since last touch; was it a pass, rebound or own carry | same |
-| Defence | each defender's time to reach the straight ball→goal line, goal-side defenders, goalkeeper position and movement | each defender's **intercept margin** along the predicted path, how many can intercept |
+| Defence | each defender's **intercept margin** against the straight ball→goal line, goal-side defenders, goalkeeper position and movement | each defender's **intercept margin** along the predicted path, how many can intercept |
 | Support | teammate's distance to the ball and goal | same |
+
+**Can a defender get there?** ([`rlxg/defence.py`](rlxg/defence.py)) The intercept margin is the time a defender needs to reach a point on the ball's path, minus when the ball gets there. The time needed starts from the defender's speed *towards that point* (negative if they are driving away), adds acceleration while their boost lasts, a turn penalty if they face the wrong way, and a jump or aerial climb when the ball is too high to hit from the ground. The two best-placed defenders each get this margin plus its ingredients. This is the single most important input to both models: adding it cut xGOT log loss by 8–10% and chance xG by about 2%.
 
 Location alone explains a lot, but not everything. Shots from the same spot can be open nets or blocked by two defenders:
 
@@ -148,14 +154,14 @@ The end point, the predicted path and a 3D clip of the play are stored with each
 
 ## Data
 
-The model covers 2v2 only and is trained on about 387k shots.
+The model covers 2v2 only and is trained on about 397k shots.
 
 | Source | Games | Shots | Conversion | Used for |
 |---|---|---|---|---|
-| [High-Level RL Replay Dataset](https://www.kaggle.com/datasets/rolvarild/high-level-rocket-league-replay-dataset) (Kaggle), newest 15k ranked 2s, Mar 2025 – Apr 2026, mostly SSL lobbies | 14,997 | 366k | 23.7% | training (10% held out for SSL calibration) |
-| [Ballchasing](https://ballchasing.com), newest ranked 2s where every player is C3–GC2 (Apr 2026, 184 uploaders) | 426 | 8.7k | 27.8% | C3–GC2 calibration |
-| Replays from the [original repo](https://github.com/sertalpbilal/rocket_league_analytics) (2021) | 437 | 8.1k | 31.5% | training |
-| The author's own games | 168 | 3.7k | 29.0% | holdout only |
+| [High-Level RL Replay Dataset](https://www.kaggle.com/datasets/rolvarild/high-level-rocket-league-replay-dataset) (Kaggle), newest 15k ranked 2s, Mar 2025 – Apr 2026, mostly SSL lobbies | 15,000 | 376k | 23.2% | training (10% held out for SSL calibration) |
+| [Ballchasing](https://ballchasing.com), newest ranked 2s where every player is C3–GC2 (Apr 2026, 184 uploaders) | 426 | 9.0k | 27.3% | C3–GC2 calibration |
+| Replays from the [original repo](https://github.com/sertalpbilal/rocket_league_analytics) (2021) | 437 | 8.3k | 31.1% | training |
+| The author's own games | 170 | 3.9k | 28.0% | holdout only |
 
 The replays and the shot tables built from them are **not in this repo**; they come to tens of GB. The [rebuilding](#rebuilding-the-model) scripts download and rebuild them.
 
@@ -167,14 +173,16 @@ All numbers are out-of-sample.
 
 | Games | Model | Predicted vs goals | Log loss | AUC |
 |---|---|---|---|---|
-| C3–GC2 (cross-validated) | **xGOT** | 2,433 vs 2,432 | **0.259** | **0.944** |
-| C3–GC2 (cross-validated) | chance xG | 2,432 vs 2,432 | 0.392 | 0.863 |
-| Author's games (never trained on) | **xGOT** | 906 vs 929 (−2%) | 0.259 | 0.946 |
-| Author's games (never trained on) | chance xG | 915 vs 929 (−2%) | 0.405 | 0.856 |
-| SSL holdout | xGOT, `--skill ssl` | 8,606 vs 8,606 | 0.232 | 0.949 |
-| SSL holdout | chance xG, `--skill ssl` | 8,606 vs 8,606 | 0.336 | 0.886 |
+| C3–GC2 (cross-validated) | **xGOT** | 2,440 vs 2,440 | **0.233** | **0.953** |
+| C3–GC2 (cross-validated) | chance xG | 2,440 vs 2,440 | 0.384 | 0.868 |
+| Author's games (never trained on) | **xGOT** | 1,052 vs 1,084 (−3%) | 0.242 | 0.951 |
+| Author's games (never trained on) | chance xG | 1,057 vs 1,084 (−2%) | 0.407 | 0.857 |
+| SSL holdout | xGOT, `--skill ssl` | 8,691 vs 8,691 | 0.210 | 0.957 |
+| SSL holdout | chance xG, `--skill ssl` | 8,691 vs 8,691 | 0.330 | 0.890 |
 
-For scale, on C3–GC2 shots, guessing the base rate for every shot scores 0.558 log loss, and a classic distance + angle model scores 0.485. Chance xG is *meant* to score worse than xGOT, because it can't see where the touch sent the ball.
+For scale, on C3–GC2 shots, guessing the base rate for every shot scores 0.586 log loss, and a classic distance + angle model scores 0.524.
+
+Switching the ball prediction from the old flat-plane model to RocketSim left these numbers about where they were: on the same shots, xGOT log loss went from 0.270 to 0.268 on C3–GC2 and from 0.277 to 0.279 on the author's games. The kinematic defender features did far more: with the same shots and split, xGOT log loss fell from 0.254 to 0.233 on C3–GC2, 0.270 to 0.242 on the author's games and 0.230 to 0.210 on the SSL holdout ([`scripts/compare_defence.py`](scripts/compare_defence.py)). RocketSim's main gains are a predicted path that matches the real ball, and about 3% more shots detected (mostly misses that roll wide). Chance xG is *meant* to score worse than xGOT, because it can't see where the touch sent the ball.
 
 ### Compared with the original
 
@@ -182,7 +190,7 @@ For scale, on C3–GC2 shots, guessing the base rate for every shot scores 0.558
 |---|---|---|
 | Parser | carball (unmaintained) | subtr-actor (Rust) |
 | What counts as a shot | every touch | last touch of a carry whose simulated path reaches the goal |
-| Features | raw position, velocity and rotation of the shooter and two opponents; no ball | ~50 geometric features in the attacking frame, including the ball and its predicted path |
+| Features | raw position, velocity and rotation of the shooter and two opponents; no ball | ~150 geometric features in the attacking frame, including the ball, its predicted path and whether each defender can reach it |
 | Model | XGBoost | LightGBM ×2 (chance xG + xGOT), per-rank calibration |
 | Data | ~400 games | ~16,000 games |
 
@@ -234,8 +242,12 @@ History lives in `data/dashboard/xg.sqlite`. "You" is detected as the most frequ
 python scripts/download_kaggle.py --mode 2v2 -n 0        # fetches metadata.jsonl only
 python scripts/download_kaggle_archive.py --mode 2v2 -n 15000
 
-# 1b. C3–GC2 games from ballchasing (BALLCHASING_TOKEN in .env). Rate limited, ~6/min
-python scripts/download_ballchasing.py -n 1000
+# 1b. C3–GC2 games from ballchasing (BALLCHASING_TOKEN in .env). Paced to the free tier's
+#     200 files/hour; re-run to carry on further back in time
+python scripts/download_ballchasing.py fetch -n 1000
+#     or let GitHub Actions collect them into Azure blob storage every hour
+#     (.github/workflows/ballchasing.yml), then copy them down:
+python scripts/download_ballchasing.py pull
 
 # 2. shots table. Each replay is parsed in its own subprocess and cached, so you can stop
 #    and re-run to resume. Add --cached-only to train on what's parsed so far.
@@ -253,6 +265,10 @@ Other scripts:
 
 - `scripts/validate_shots.py <replays...>` compares detected shots and goals with the in-game stats.
 - `scripts/compare_sources.py` reruns the "how should SSL data be used for C3–GC2?" comparison.
+- `scripts/compare_defence.py` trains the models with and without the kinematic defender features, on whatever is in the cache.
+- `scripts/compare_features.py` does the same for each extra feature group in `rlxg/situation.py`.
+- [`docs/final_rebuild.md`](docs/final_rebuild.md): the last big rebuild, shutting down the cloud collection, and what to keep before deleting the replays.
+- `scripts/compare_physics.py <replays...>` plays every untouched shot forward with both ball models and compares them with what the real ball did.
 - `docs/make_figures.py` regenerates the figures in this README.
 
 ## Project layout
@@ -261,8 +277,12 @@ Other scripts:
 rlxg/
   parse.py        replay → per-frame arrays (subtr-actor)
   touches.py      touch detection from ball impulses + car hitboxes
-  physics.py      ball flight simulation (gravity, drag, bounces)
+  rsim.py         ball prediction with RocketSim (real arena, goal frame, spin)
+  physics.py      the older flat-plane ball model (no spin, no goal frame), kept for comparison
   shots.py        shot selection, labels, features
+  defence.py      can a defender reach the ball's path in time (kinematic intercept)
+  situation.py    goal-mouth coverage, pressure on the shooter, recent movement, game state
+  windows.py      raw ball/car states around each shot, kept so features can be added without replays
   model.py        XGModel: xG + xGOT boosters and per-band calibration
   outcome.py      where each shot ended + 3D clips
   analyze.py      analyze_replay(): the end-to-end entry point
@@ -276,6 +296,7 @@ tests/            smoke tests
 ## Credits
 
 - **[sertalpbilal/rocket_league_analytics](https://github.com/sertalpbilal/rocket_league_analytics)** by sertalpbilal: the original Rocket League xG model and the idea this builds on. Its 2021 replays are also part of the training data.
+- **[RocketSim](https://github.com/ZealanL/RocketSim)** by ZealanL: Rocket League ball physics, used for every simulated ball path.
 - **[subtr-actor](https://github.com/rlrml/subtr-actor)** and **[boxcars](https://github.com/nickbabcock/boxcars)**: replay parsing.
 - **[High-Level Rocket League Replay Dataset](https://www.kaggle.com/datasets/rolvarild/high-level-rocket-league-replay-dataset)** on Kaggle: most of the training data.
 - **[ballchasing.com](https://ballchasing.com)**: rank-tagged mid-level replays for calibration.

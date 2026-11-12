@@ -25,16 +25,39 @@ import joblib
 import numpy as np
 import pandas as pd
 
+from . import situation
+
 DEFAULT_MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "xg_model.joblib"
 DEFAULT_BAND = "c3-gc2"
 
+# Kinematic defender features (defence.py): for the two defenders best placed to cut the path
+# out, the time they need to get there (closing speed, facing, boost, jump/aerial climb) against
+# when the ball arrives. `k*` uses the ball's simulated path, `ck*` the straight ball->goal line.
+DEFENCE_FEATURES = [f"k{i}_{k}" for i in (1, 2) for k in (
+    "margin", "t_int", "int_z", "int_gap_y", "d_int", "closing", "facing", "reach_frac", "t_first",
+    "z", "vz", "speed", "vy", "boost", "on_ground", "jumped", "up_t", "drive_t")] + ["k_n_can", "k_n_can_easy"]
+CHANCE_DEFENCE_FEATURES = ["c" + c for c in DEFENCE_FEATURES]
+
+# Extra context (situation.py). Each group can be switched off in scripts/compare_features.py.
+COVERAGE_FEATURES = situation.COVERAGE_KEYS      # how much of the goal mouth is open (chance xG only)
+PRESSURE_FEATURES = situation.PRESSURE_KEYS      # how soon a defender can get to the ball
+HISTORY_FEATURES = situation.HISTORY_KEYS        # shooter/ball/defender/teammate movement over the last 0.5 s
+GAME_FEATURES = situation.GAME_KEYS              # score difference, seconds left, overtime
+# Lobby ranks (build_dataset.py) are in the shot table for analysis but not model inputs:
+# your own games have no rank metadata, so the model couldn't use them at prediction time.
+RANK_COLUMNS = ["lobby_min_tier", "lobby_max_tier", "att_tier", "def_tier", "shooter_tier"]
+FEATURE_GROUPS = {"coverage": COVERAGE_FEATURES, "pressure": PRESSURE_FEATURES,
+                  "history": HISTORY_FEATURES, "game": GAME_FEATURES}
+
 # Signed x-quantities are folded so the model is left/right symmetric.
-FEATURES = [
+BASE_FEATURES = [
     # ball state just after the touch
     "ball_abs_x", "ball_y", "ball_z", "ball_vx_to_centre", "ball_vy", "ball_vz", "ball_speed",
     "dist_goal", "goal_angle", "angle_off_centre", "dir_cos_goal", "touch_dv",
     # predicted free-flight trajectory
     "on_target", "cross_abs_x", "cross_z", "cross_margin", "time_to_goal", "cross_speed", "n_bounces",
+    # what RocketSim says happens if nobody touches it again (goes in / hits the frame / P(goal) under jitter)
+    "sim_goal", "sim_frame", "sim_p_goal", "ball_spin",
     # shooter
     "shooter_z", "shooter_speed", "shooter_vy", "shooter_airborne", "shooter_boost", "shooter_dodge",
     "carry_time",
@@ -48,10 +71,11 @@ FEATURES = [
     # support
     "n_att", "mate_d_goal", "mate_d_ball",
 ]
+FEATURES = BASE_FEATURES + DEFENCE_FEATURES + PRESSURE_FEATURES + HISTORY_FEATURES + GAME_FEATURES
 
 # Chance xG: nothing that depends on where the touch sent the ball.
 # (ball_x/y/z are read one frame after contact; the ball has barely moved.)
-CHANCE_FEATURES = [
+BASE_CHANCE_FEATURES = [
     # ball before the touch
     "ball_abs_x", "ball_y", "pre_ball_z", "dist_goal", "goal_angle", "angle_off_centre",
     "pre_ball_vx_to_centre", "pre_ball_vy", "pre_ball_vz", "pre_ball_speed", "pre_ball_dir_cos_goal",
@@ -67,6 +91,8 @@ CHANCE_FEATURES = [
     # support
     "n_att", "mate_d_goal", "mate_d_ball",
 ]
+CHANCE_FEATURES = (BASE_CHANCE_FEATURES + CHANCE_DEFENCE_FEATURES + COVERAGE_FEATURES + PRESSURE_FEATURES
+                   + HISTORY_FEATURES + GAME_FEATURES)
 
 # Minimal "classic" model (distance + angle) used as a baseline in evaluation.
 BASELINE_FEATURES = ["dist_goal", "goal_angle"]

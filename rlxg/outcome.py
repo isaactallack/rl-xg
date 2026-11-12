@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 
 from . import physics as ph
+from . import rsim
 from .parse import Replay
 from .touches import Touch
 
@@ -175,13 +176,13 @@ def shot_clip(rep: Replay, shot: dict) -> dict:
     # where the touch was sending the ball (the xGOT view), world coordinates
     post = min(int(shot.get("post_frame", f + 1)), rep.n_frames - 1)
     bp, bv = rep.ball_pos[post] * flip, rep.ball_vel[post] * flip
+    ba = rep.ball_ang_vel[post] * flip if rep.ball_ang_vel is not None else np.zeros(3)
     pred = []
     if np.isfinite(bp).all() and np.isfinite(bv).all():
-        pr = ph.predict(bp[None], bv[None], 5.0)
-        pts = pr.samples[0]
-        pts = pts[np.isfinite(pts).all(1)]
-        if pr.reaches_goal_plane[0]:
-            pts = np.vstack([pts, [pr.cross_x[0], ph.ARENA_Y, pr.cross_z[0]]])
+        # RocketSim path up to the first thing the ball would hit (the net, a post, the back wall...)
+        P, V = rsim.run(bp, bv, np.nan_to_num(ba), int(5.0 * rsim.TICK_RATE))
+        _, k = rsim.first_event(P, V)
+        pts = np.vstack([P[:k:rsim.SAMPLE_EVERY // 2], P[k]])
         pred = _r(pts * flip)
 
     cars = []

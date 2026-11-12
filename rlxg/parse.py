@@ -72,6 +72,7 @@ class Replay:
     stat_events: list[StatEvent]
     final_score: tuple[int, int] = (0, 0)
     scoreboard: dict = field(default_factory=dict)  # pid -> in-game stats
+    ball_ang_vel: np.ndarray | None = None  # (F, 3) rad/s (replays store it x100)
 
     @property
     def n_frames(self) -> int:
@@ -79,6 +80,9 @@ class Replay:
 
     def player(self, pid: str) -> Player:
         return next(p for p in self.players if p.pid == pid)
+
+
+ANG_VEL_SCALE = 100.0    # replay angular velocity units per rad/s (the ball's 6 rad/s cap shows as ~600)
 
 
 def _vec(d: dict | None) -> tuple[float, float, float]:
@@ -100,12 +104,14 @@ def load_replay(path: str | Path) -> Replay:
 
     ball_pos = np.full((n, 3), np.nan)
     ball_vel = np.full((n, 3), np.nan)
+    ball_ang = np.full((n, 3), np.nan)
     for i, f in enumerate(fd["frame_data"]["ball_data"]["frames"]):
         d = f.get("Data") if isinstance(f, dict) else None
         if d and d.get("rigid_body"):
             rb = d["rigid_body"]
             ball_pos[i] = _vec(rb.get("location"))
             ball_vel[i] = _vec(rb.get("linear_velocity"))
+            ball_ang[i] = _vec(rb.get("angular_velocity"))
 
     # Team/name lookup from header metadata
     name_of, team_of = {}, {}
@@ -189,4 +195,5 @@ def load_replay(path: str | Path) -> Replay:
         stat_events=stat_events,
         final_score=(int(headers.get("Team0Score", 0) or 0), int(headers.get("Team1Score", 0) or 0)),
         scoreboard=scoreboard,
+        ball_ang_vel=ball_ang / ANG_VEL_SCALE,
     )

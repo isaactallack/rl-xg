@@ -1,4 +1,5 @@
 subtr-actor-py==1.5.1
+rocketsim==2.2.1        # ball prediction; needs arena meshes dumped from the game (see README)
 numpy>=2.0
 pandas>=2.2
 scikit-learn>=1.5
@@ -11,5 +12,6 @@ python-multipart>=0.0.9
 # data download
 requests>=2.31
 kagglehub>=0.3
+azure-storage-blob>=12.19   # only for the ballchasing replays kept in Azure (scripts/download_ballchasing.py)
 # README figures (docs/make_figures.py, optional)
 # matplotlib>=3.8
