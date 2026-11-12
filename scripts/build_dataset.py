@@ -2,8 +2,9 @@
 
     python scripts/build_dataset.py data/raw/legacy_2v2 "C:/.../TAGame/Demos" -o data/shots.csv
 
-Each replay is processed in its own subprocess (the Rust parser can hard-crash on
-corrupt files) and cached under data/cache/, so re-runs only parse new replays.
+Replays are processed in long-lived worker subprocesses (the Rust parser can hard-crash on
+corrupt files; a crashed worker is replaced and only that replay is lost) and cached under
+data/cache/, so re-runs only parse new replays.
 """
 from __future__ import annotations
 
@@ -11,8 +12,11 @@ import argparse
 import hashlib
 import json
 import os
+import queue
 import subprocess
 import sys
+import tempfile
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -124,24 +128,125 @@ def add_ranks(shots: pd.DataFrame, meta: dict) -> pd.DataFrame:
     return pd.concat([shots.drop(columns=cols, errors="ignore"), ranks], axis=1)
 
 
+REPLY = "@@rlxg "      # marks the worker's replies, so stray output on stdout can't be mistaken for one
+RECYCLE_AFTER = 500   # replays per worker process before it's replaced (bounds any slow leak)
+
+
+def serve() -> None:
+    """Long-lived worker: one "replay<TAB>out_csv" per line on stdin, one reply per replay on stdout.
+
+    Importing everything and loading the arena meshes takes ~0.7 s, a quarter of a replay's
+    time, so a worker process stays up between replays instead of starting fresh for each one.
+    """
+    sys.stdin.reconfigure(encoding="utf-8")
+    reply = sys.stdout
+    reply.reconfigure(encoding="utf-8")
+    sys.stdout = sys.stderr                  # anything else printed goes to the log, not the reply channel
+    import traceback
+    for line in sys.stdin:
+        path, out = line.rstrip("\n").split("\t")
+        try:
+            worker(path, out)
+            msg = "ok"
+        except Exception as e:
+            msg = traceback.format_exception_only(e)[-1].strip().replace("\n", " ")[:200]
+        reply.write(REPLY + msg + "\n")
+        reply.flush()
+
+
+class Worker:
+    """One serve() subprocess, restarted when it crashes (the Rust parser can hard-crash on
+    corrupt files), hangs past the timeout, or has done RECYCLE_AFTER replays."""
+
+    def __init__(self, timeout: float):
+        self.timeout = timeout
+        self.proc = None
+
+    def _start(self):
+        self.err = tempfile.TemporaryFile()
+        self.proc = subprocess.Popen([sys.executable, __file__, "--serve"], stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, stderr=self.err,
+                                     text=True, encoding="utf-8", bufsize=1)
+        self.replies = queue.Queue()
+        threading.Thread(target=self._read, args=(self.proc, self.replies), daemon=True).start()
+        self.done = 0
+
+    @staticmethod
+    def _read(proc, replies):
+        for line in proc.stdout:
+            if line.startswith(REPLY):
+                replies.put(line[len(REPLY):].rstrip("\n"))
+        replies.put(None)                    # the process has exited
+
+    def _crash_message(self) -> str:
+        try:
+            code = self.proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            code = None
+        self.err.seek(0)
+        lines = self.err.read().decode("utf-8", "replace").strip().splitlines()
+        return (lines[-1] if lines else f"exit {code}")[:200]
+
+    def close(self):
+        if self.proc is not None:
+            if self.proc.poll() is None:
+                self.proc.kill()
+                self.proc.wait()
+            self.err.close()
+            self.proc = None
+
+    def run(self, path: Path, out: Path) -> str | None:
+        if self.proc is None or self.proc.poll() is not None or self.done >= RECYCLE_AFTER:
+            self.close()
+            self._start()
+        try:
+            self.proc.stdin.write(f"{path}\t{out}\n")
+            self.proc.stdin.flush()
+        except OSError:
+            r = None
+        else:
+            try:
+                r = self.replies.get(timeout=self.timeout)
+            except queue.Empty:
+                self.close()
+                return "timeout"
+        self.done += 1
+        if r is None:
+            msg = self._crash_message()
+            self.close()
+            return msg
+        return None if r == "ok" else r
+
+
+_local = threading.local()
+_workers: list[Worker] = []
+_workers_lock = threading.Lock()
+
+
 def run_one(path: Path, cache: Path, timeout: float) -> tuple[Path, str | None]:
     out = cache / (path.stem + ".csv")
     if out.exists() and out.with_suffix(".json").exists():
         return out, None
-    try:
-        r = subprocess.run([sys.executable, __file__, "--worker", str(path), str(out)],
-                           capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        return out, "timeout"
-    if r.returncode != 0:
-        msg = (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
-        return out, msg[:200]
-    return out, None
+    w = getattr(_local, "worker", None)
+    if w is None:
+        w = _local.worker = Worker(timeout)
+        with _workers_lock:
+            _workers.append(w)
+    return out, w.run(path, out)
+
+
+def close_workers():
+    with _workers_lock:
+        for w in _workers:
+            w.close()
 
 
 def main():
     if len(sys.argv) == 4 and sys.argv[1] == "--worker":
         worker(sys.argv[2], sys.argv[3])
+        return
+    if sys.argv[1:] == ["--serve"]:
+        serve()
         return
     ap = argparse.ArgumentParser()
     ap.add_argument("dirs", nargs="+")
@@ -193,9 +298,11 @@ def main():
     except KeyboardInterrupt:
         # finished replays are in the cache: the same command carries on from here
         ex.shutdown(wait=False, cancel_futures=True)
+        close_workers()
         sys.exit(f"stopped after {len(outs)} replays. Re-run the same command to carry on, "
                  f"or add --cached-only to build the table from what is done so far.")
     ex.shutdown()
+    close_workers()
 
     dfs = []
     for o in outs:
