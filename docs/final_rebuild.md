@@ -178,6 +178,12 @@ python scripts/train.py data/shots.csv --recalibrate models/xg_model.joblib
 The model file records which SSL games were held out, so the SSL numbers stay out-of-sample.
 Then refresh the README numbers again (the C3–GC2 ones will have tighter error bars).
 
+**Close the dashboard before writing, committing or merging a new `models/xg_model.joblib`.** It
+reloads the model whenever the file changes, and while it's reading it Windows won't let anything
+replace the file. On 12 Nov that stopped a `git merge` halfway, leaving the old model on disk under
+the new commit; `git reset --hard <commit>` with the dashboard closed fixed it. Restart the
+dashboard afterwards: it re-scores every stored game with the new model.
+
 **Ranks as a model input (optional experiment).** With ranks in the table you can
 try training on everything with `att_tier`/`def_tier` as features, in place of the per-band
 calibration. That one needs a full retrain. Your own games have no rank metadata, so you'd
