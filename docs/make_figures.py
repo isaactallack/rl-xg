@@ -1,10 +1,13 @@
 """Regenerate the explanatory figures in docs/img/ used by the README.
 
     pip install matplotlib
-    python docs/make_figures.py --shots data/shots_v4.csv --replay path/to/a_2v2_game.replay
+    python docs/make_figures.py --shots data/shots.csv --replay path/to/a_2v2_game.replay
+    python docs/make_figures.py --replay x --only intercept coverage jitter     # just some
 
 Needs the trained model (models/xg_model.joblib), a shots table built with
-scripts/build_dataset.py, and one 2v2 replay for the touch -> shot walkthrough.
+scripts/build_dataset.py, one 2v2 replay for the touch -> shot walkthrough, the Kaggle
+replays (data/raw/hlrlrd_2v2) to find examples for the feature explainers, and
+data/learning_curve.json from scripts/learning_curve.py for the learning curves.
 """
 from __future__ import annotations
 
@@ -78,7 +81,7 @@ def fig_pipeline():
         ("Touches", "ball velocity jumps with a\ncar hitbox in contact range", BLUE),
         ("Shots", "last touch of a carry whose\nsimulated path reaches goal", BLUE),
         ("Label", "goal if scored before the\nteam touches again (7 s)", ORANGE),
-        ("Features", "~50 geometric features,\nbefore and after the touch", ORANGE),
+        ("Features", "~190 features: ball, path,\ndefender timing, game state", ORANGE),
         ("Models", "LightGBM xG + xGOT,\ncalibrated per rank band", GREEN),
         ("Use", "CLI, Python API and\nlive dashboard", GREEN),
     ]
@@ -119,11 +122,12 @@ def fig_touch_to_shot(replay_path: str):
     cands = set(candidate_touches(touches))
     t_arr = np.array([t.time for t in touches])
 
-    # pick a goal with a busy build-up (several touches in the 6 s before it)
+    # pick a goal with a busy build-up (several touches in the 6 s before it), struck from far
+    # enough out that the predicted path is visible
     best, best_n = None, -1
     for _, s in shots[shots.goal == 1].iterrows():
-        n = int(((t_arr > s.time - 6) & (t_arr <= s.time)).sum())
-        if 3 <= n and n > best_n:
+        n = int(((t_arr > s.time - 6) & (t_arr <= s.time)).sum()) + (100 if s.dist_goal > 2000 else 0)
+        if 3 <= n % 100 and n > best_n:
             best, best_n = s, n
     s = best if best is not None else shots.iloc[0]
     ti = int(np.flatnonzero(t_arr == s.time)[0])
@@ -232,7 +236,7 @@ def fig_conversion_map(df):
 
 # --------------------------------------------------------------------------- 4/5
 def fig_holdout(df, model):
-    d = df[df.source == "Demos"].copy()
+    d = df[(df.source == "Demos") & (df.team_size == 2)].copy()     # the model covers 2v2 only
     if len(d) < 200:
         print("not enough Demos shots for the holdout figure; skipped")
         return
@@ -292,6 +296,19 @@ LABELS = {
     "gk_d_cross": "goalkeeper distance to the crossing point", "pre_ball_speed": "ball speed before the touch",
     "sim_p_goal": "RocketSim: share of runs that go in", "sim_goal": "RocketSim: goes in unaided",
     "sim_frame": "RocketSim: hits post / bar", "ball_spin": "ball spin",
+    # kinematic defender timing (defence.py): k* along the predicted path, ck* along the straight shot line
+    "k1_margin": "best defender's time margin to the path", "k2_margin": "2nd defender's time margin to the path",
+    "k1_reach_frac": "share of the path best defender can reach", "k1_t_int": "when best defender meets the path",
+    "k1_up_t": "best defender's jump / aerial time", "k_n_can": "defenders who can reach the path",
+    "k1_int_z": "height where best defender meets the path", "k1_closing": "best defender's closing speed",
+    "ck1_margin": "best defender's time margin to the shot line", "ck2_margin": "2nd defender's margin to the shot line",
+    # goal-mouth coverage (situation.py)
+    "cov_fast_mean": "goal coverage, hard shot (mean margin)", "cov_fast_best": "most open spot, hard shot",
+    "cov_fast_open": "share of goal open, hard shot", "cov_mean": "goal coverage (mean margin)",
+    "cov_best": "most open spot", "cov_open": "share of goal open",
+    "shooter_align": "shooter lined up behind the ball", "shooter_v_to_goal": "shooter speed towards goal",
+    "press1_t": "time for nearest defender to reach the ball", "seconds_remaining": "seconds left",
+    "score_diff": "score difference",
 }
 
 
@@ -317,20 +334,281 @@ def fig_importance(model, top=12):
     save(fig, "fig_importance.png")
 
 
+# --------------------------------------------------------------------------- 6/7/8: how the harder features work
+def _flip(team):
+    return np.array([1.0, 1.0, 1.0]) if team == 0 else np.array([-1.0, -1.0, 1.0])
+
+
+def _opp_state(rep, f, team, flip):
+    """Defender states as shots.py builds them (attacking frame), plus a 0.5 s trail of positions."""
+    from rlxg.touches import quat_to_matrix
+    g = int(np.clip(np.searchsorted(rep.time, rep.time[f] - 0.5), 0, f))
+    out = []
+    for p in rep.players:
+        if p.team == team or not np.isfinite(p.pos[f]).all():
+            continue
+        q = p.quat[f]
+        rot = quat_to_matrix(q[None])[0] if np.isfinite(q).all() else np.full((3, 3), np.nan)
+        out.append(dict(pos=p.pos[f] * flip, vel=p.vel[f] * flip, fwd=rot[:, 0] * flip, up=rot[:, 2] * flip,
+                        boost=float(p.boost[f]) if np.isfinite(p.boost[f]) else 33.0,
+                        jumped=bool(p.jump[f] or p.double_jump[f] or p.dodge[f]),
+                        trail=p.pos[g:f + 1] * flip))
+    return out
+
+
+def find_examples(folder: str, max_replays: int = 200) -> dict:
+    """Search high-level replays for one clear example shot of each feature (deterministic)."""
+    want = {
+        # best defender just makes it, the second one doesn't, both on the ground
+        "intercept": lambda s: (-0.5 < s.k1_margin < -0.1) and (0.2 < s.k2_margin < 1.5) and s.k1_on_ground == 1
+                     and s.k2_on_ground == 1 and s.n_def == 2 and 2500 < s.dist_goal < 5000
+                     and s.def1_d_ball > 900 and s.ball_abs_x < 2000,
+        # part of the goal covered by a defender in the way, nobody pressuring the ball
+        "coverage": lambda s: 0.3 <= s.cov_open <= 0.7 and s.n_def == 2 and 2000 < s.dist_goal < 4500
+                    and s.press1_t > 0.5 and s.ball_abs_x < 2000 and s.gk_goal_side == 1 and s.gk_d_goal < 1500,
+        "jitter": lambda s: 0.35 <= s.sim_p_goal <= 0.65 and s.sim_kind in ("post", "goal", "bar"),
+    }
+    found = {}
+    for path in sorted(Path(folder).glob("*.replay"))[:max_replays]:
+        try:
+            rep = load_replay(path)
+            shots = extract_shots(rep, detect_touches(rep))
+        except Exception:
+            continue
+        for key, ok in want.items():
+            if key in found or not len(shots):
+                continue
+            hit = shots[shots.apply(ok, axis=1)]
+            if len(hit):
+                found[key] = (rep, hit.iloc[0])
+        if len(found) == len(want):
+            break
+    print("examples:", {k: Path(v[0].path).stem[:8] for k, v in found.items()})
+    return found
+
+
+def _zoom(ax, pts, pad=700):
+    """Zoom a pitch() axis onto these points (x stays mirrored, the goal stays in view)."""
+    pts = np.asarray(pts)[:, :2]
+    x0, x1 = max(pts[:, 0].min() - pad, -ph.ARENA_X - 300), min(pts[:, 0].max() + pad, ph.ARENA_X + 300)
+    ax.set_xlim(x1, x0)
+    ax.set_ylim(max(pts[:, 1].min() - pad, -ph.ARENA_Y), ph.ARENA_Y + 1100)
+
+
+def _shot_path(rep, s):
+    """RocketSim path of a shot, attacking frame, sampled every 0.1 s (as the features use it)."""
+    flip = _flip(s.team)
+    pf = int(s.post_frame)
+    pred = rsim.predict((rep.ball_pos[pf] * flip)[None], (rep.ball_vel[pf] * flip)[None],
+                        (np.nan_to_num(rep.ball_ang_vel[pf]) * flip)[None], 5.0)
+    P, t = pred.samples[0], pred.sample_t
+    ok = np.isfinite(P).all(1)
+    return P[ok], t[ok]
+
+
+def fig_intercept(rep, s):
+    from rlxg import defence
+    flip = _flip(s.team)
+    f = int(s.frame)
+    P, t = _shot_path(rep, s)
+    opp = sorted(_opp_state(rep, f, s.team, flip),
+                 key=lambda d: (defence.need_time(**d, path=P) - t).min())
+    cols = (RED, PURPLE)
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(14, 6.4), gridspec_kw=dict(width_ratios=[1, 1.2]))
+    pitch(a1)
+    _zoom(a1, np.vstack([P, *(d["trail"] for d in opp), *(d["pos"][None] for d in opp)]))
+    sc = a1.scatter(P[:, 0], P[:, 1], c=t, cmap="viridis", s=26, zorder=3, ec="none")
+    a1.scatter(*rep.ball_pos[f][:2] * flip[:2], s=140, c=FG, ec=BG, zorder=5)
+    a1.text(*(rep.ball_pos[f][:2] * flip[:2] + [0, -260]), "ball at the touch", ha="center", color=FG, fontsize=9)
+    for i, (d, c) in enumerate(zip(opp, cols)):
+        need = defence.need_time(**d, path=P)
+        k = int(np.argmin(need - t))
+        a1.plot(d["trail"][:, 0], d["trail"][:, 1], color=c, lw=2, alpha=0.5, zorder=3)
+        a1.scatter(*d["pos"][:2], s=120, marker="s", c=c, ec=BG, zorder=5)
+        a1.annotate("", xy=d["pos"][:2] + d["vel"][:2] * 0.4, xytext=d["pos"][:2],
+                    arrowprops=dict(arrowstyle="-|>", color=c, lw=2), zorder=5)
+        a1.plot([d["pos"][0], P[k, 0]], [d["pos"][1], P[k, 1]], color=c, lw=1.2, ls=":", zorder=4)
+        a1.scatter(P[k, 0], P[k, 1], s=160, facecolors="none", edgecolors=c, lw=2, zorder=6)
+        a1.text(d["pos"][0], d["pos"][1] - 330, f"defender {i + 1}", ha="center", color=c, fontsize=9.5,
+                fontweight="bold")
+        a2.plot(t, need, color=c, lw=2.2,
+                label=f"defender {i + 1}: time to reach each point (margin {need[k] - t[k]:+.2f} s)")
+        a2.fill_between(t, need, t, where=need <= t, color=c, alpha=0.25, lw=0, interpolate=True)
+        a2.plot([t[k], t[k]], [t[k], need[k]], color=c, lw=3, solid_capstyle="butt")
+    a2.plot(t, t, color=FG, lw=2, ls="--", label="ball arrives there")
+    cb = fig.colorbar(sc, ax=a1, fraction=0.04, pad=0.02)
+    cb.set_label("seconds after the touch", color=MUTED)
+    cb.outline.set_edgecolor(GRID)
+    a1.set_title("Predicted ball path and each defender")
+    a1.text(0.02, 0.02, "trail: last 0.5 s · arrow: velocity\ncircle: their best point on the path",
+            transform=a1.transAxes, color=MUTED, fontsize=9, va="bottom")
+    a2.set_xlabel("time the ball reaches a point on its path (s)")
+    a2.set_ylabel("time (s)")
+    a2.set_ylim(0, min(max(t.max() + 1.0, 2.0), 5.0))
+    a2.set_xlim(0, t.max())
+    a2.set_title("Shaded = the defender gets there before the ball")
+    a2.text(0.98, 0.03, "margin = time needed − ball's arrival, at their best point (thick bar)",
+            transform=a2.transAxes, ha="right", color=MUTED, fontsize=9)
+    a2.legend(loc="upper left", fontsize=9.5)
+    a2.grid(color=GRID, lw=0.6, alpha=0.5)
+    fig.tight_layout()
+    save(fig, "fig_intercept.png")
+
+
+def fig_coverage(rep, s):
+    from matplotlib.colors import TwoSlopeNorm
+    from rlxg import defence, situation
+    flip = _flip(s.team)
+    f = int(s.frame)
+    pb = rep.ball_pos[f] * flip
+    speed = max(float(np.linalg.norm(rep.ball_vel[f])), 1500.0)
+    opp = _opp_state(rep, f, s.team, flip)
+    fr = np.linspace(0.0, 1.0, defence.PATH_POINTS)
+    best = np.full(len(situation.AIMS), defence.T_CAP)
+    for j, aim in enumerate(situation.AIMS):
+        line = pb + fr[:, None] * (aim - pb)
+        tt = fr * np.linalg.norm(aim - pb) / speed
+        best[j] = min(((defence.need_time(**d, path=line) - tt).min() for d in opp), default=defence.T_CAP)
+    norm = TwoSlopeNorm(vmin=-1.0, vcenter=0.0, vmax=1.0)
+    cmap = plt.get_cmap("RdYlGn")
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(14, 5.6), gridspec_kw=dict(width_ratios=[1.25, 1]))
+    W, H = ph.GOAL_HALF_W, ph.GOAL_H
+    xs, zs = np.unique(situation.AIMS[:, 0]), np.unique(situation.AIMS[:, 2])
+    dx, dz = 2 * W / len(xs), H / len(zs)
+    for aim, b in zip(situation.AIMS, best):
+        i, j = int(np.flatnonzero(xs == aim[0])[0]), int(np.flatnonzero(zs == aim[2])[0])
+        a1.add_patch(Rectangle((-W + i * dx + dx * 0.03, j * dz + dz * 0.03), dx * 0.94, dz * 0.94,
+                               fc=cmap(norm(np.clip(b, -1, 1))), ec="none", zorder=2))
+        a1.text(-W + (i + 0.5) * dx, (j + 0.5) * dz, f"{b:+.2f}", ha="center", va="center",
+                fontsize=9.5, color=BG, fontweight="bold", zorder=3)
+    a1.add_patch(Rectangle((-W, 0), 2 * W, H, fc="none", ec="white", lw=2.5, zorder=4))
+    a1.set_xlim(W + 100, -W - 100), a1.set_ylim(-30, H + 60)      # mirrored like the top-down view
+    a1.set_aspect("equal")
+    a1.set_xticks([]), a1.set_yticks([])
+    a1.set_title(f"Goal mouth seen from the shooter: {np.mean(best >= 0):.0%} open")
+    a1.text(0, -25, "best defender's margin (s) on the straight line to each spot: + = open, − = covered",
+            ha="center", va="top", color=MUTED, fontsize=9)
+    pitch(a2)
+    _zoom(a2, np.vstack([pb[None], situation.AIMS, *(d["trail"] for d in opp)]), pad=500)
+    for aim, b in zip(situation.AIMS, best):
+        a2.plot([pb[0], aim[0]], [pb[1], aim[1]], color=cmap(norm(np.clip(b, -1, 1))), lw=1.4, alpha=0.8, zorder=2)
+    a2.scatter(pb[0], pb[1], s=140, c=FG, ec=BG, zorder=5)
+    for d in opp:
+        a2.plot(d["trail"][:, 0], d["trail"][:, 1], color=RED, lw=2, alpha=0.5, zorder=3)
+        a2.scatter(*d["pos"][:2], s=120, marker="s", c=RED, ec=BG, zorder=5)
+        a2.annotate("", xy=d["pos"][:2] + d["vel"][:2] * 0.4, xytext=d["pos"][:2],
+                    arrowprops=dict(arrowstyle="-|>", color=RED, lw=2), zorder=5)
+    a2.set_title("Lines to the 7 × 3 grid, before the touch\n(from above, the 3 heights overlap)")
+    fig.tight_layout()
+    save(fig, "fig_coverage.png")
+
+
+def fig_jitter(rep, s):
+    import zlib
+    flip = _flip(s.team)
+    pf = int(s.post_frame)
+    pos, vel = rep.ball_pos[pf] * flip, rep.ball_vel[pf] * flip
+    ang = np.nan_to_num(rep.ball_ang_vel[pf] * flip)
+    rng = np.random.default_rng(zlib.crc32(f"{rep.replay_id}:{int(s.frame)}".encode()))  # same draws as p_goal
+    spd = float(np.linalg.norm(vel))
+    runs = []
+    for _ in range(rsim.JITTER_RUNS):
+        P, V = rsim.run(pos + rng.normal(0, rsim.JIT_POS, 3), vel + rng.normal(0, rsim.JIT_VEL * spd, 3),
+                        ang + rng.normal(0, rsim.JIT_ANG, 3), int(5.0 * rsim.TICK_RATE))
+        kind, k = rsim.first_event(P, V)
+        runs.append((P[:k + 1], kind))
+    n_goal = sum(k == "goal" for _, k in runs)
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(14, 5.6), gridspec_kw=dict(width_ratios=[1, 1.3]))
+    W, H = ph.GOAL_HALF_W, ph.GOAL_H
+    for P, kind in runs:
+        c = ORANGE if kind == "goal" else BLUE
+        a1.plot(P[:, 0], P[:, 1], color=c, lw=1.2, alpha=0.75)
+        end = P[np.flatnonzero(P[:, 1] >= rsim.CROSS_Y)[0]] if (P[:, 1] >= rsim.CROSS_Y).any() else P[-1]
+        a2.scatter(end[0], end[2], s=70, c=c, ec=BG, lw=1, zorder=4)
+    pitch(a1)
+    ends = np.array([P[-1] for P, _ in runs])
+    # the last 1.2 s before the goal: where the copies split
+    a1.set_xlim(min(ends[:, 0].max() + 1400, ph.ARENA_X + 300), max(ends[:, 0].min() - 1400, -ph.ARENA_X - 300))
+    a1.set_ylim(ph.ARENA_Y - 2200, ph.ARENA_Y + 1000)
+    a1.set_title(f"{rsim.JITTER_RUNS} slightly different copies of one shot (end of their paths)")
+    a2.add_patch(Rectangle((-W, 0), 2 * W, H, fc="none", ec="white", lw=2.5, zorder=3))
+    a2.axhline(0, color=FG, lw=1)
+    a2.set_xlim(W + 600, -W - 600), a2.set_ylim(0, H + 400)      # mirrored like the top-down view
+    a2.set_aspect("equal")
+    a2.set_xlabel("across the goal line (uu)"), a2.set_ylabel("height (uu)")
+    a2.set_title(f"Where each one arrives: {n_goal} of {rsim.JITTER_RUNS} go in → sim_p_goal = {n_goal / rsim.JITTER_RUNS:.2f}")
+    a2.legend(handles=[Line2D([], [], marker="o", ls="", mfc=ORANGE, mec=BG, ms=9, label="goal"),
+                       Line2D([], [], marker="o", ls="", mfc=BLUE, mec=BG, ms=9, label="post / bar / wide")],
+              loc="upper right", fontsize=10)
+    a2.text(0.02, 0.97, f"jitter: ±{rsim.JIT_POS:.0f} uu position, ±{rsim.JIT_VEL:.0%} speed,\n"
+            f"±{rsim.JIT_ANG} rad/s spin per axis", transform=a2.transAxes, va="top", color=MUTED, fontsize=9)
+    fig.tight_layout()
+    save(fig, "fig_jitter.png")
+
+
+def fig_learning_curve(path):
+    import json
+    runs = pd.DataFrame(json.loads(Path(path).read_text())["runs"])
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(14, 5.6))
+    for model, c in (("xGOT", GREEN), ("chance xG", PURPLE)):
+        r = runs[runs.model == model].sort_values("replays")
+        a1.plot(r.replays, r.test_ll, color=c, lw=2.2, marker="o", label=f"{model}: high-level test")
+        a1.plot(r.replays, r.c3_ll, color=c, lw=1.6, ls="--", marker="s", ms=5, label=f"{model}: C3–GC2")
+        last = r.iloc[-1]
+        a2.plot(np.arange(1, len(last.curve_test) + 1), last.curve_test, color=c, lw=2.2, label=f"{model}: test")
+        a2.plot(np.arange(1, len(last.curve_train) + 1), last.curve_train, color=c, lw=1.4, ls=":",
+                label=f"{model}: training")
+        a2.axvline(last.best_iter, color=c, lw=1, alpha=0.4)
+    a1.set_xscale("log")
+    a1.set_xlabel("high-level replays used for training (log scale)")
+    a1.set_ylabel("log loss on games not trained on (lower is better)")
+    a1.set_title("Does more data still help?")
+    a1.legend(fontsize=9, ncol=2, loc="upper right")
+    a1.grid(color=GRID, lw=0.6, alpha=0.5)
+    a2.set_xlabel("trees")
+    a2.set_ylabel("log loss")
+    a2.set_title(f"Training curve, all {int(runs.replays.max()):,} replays")
+    a2.legend(fontsize=9, loc="upper right")
+    a2.grid(color=GRID, lw=0.6, alpha=0.5)
+    fig.tight_layout()
+    save(fig, "fig_learning_curve.png")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=str(ROOT / "data" / "shots.csv"))
     ap.add_argument("--replay", required=True)
+    ap.add_argument("--examples", default=str(ROOT / "data" / "raw" / "hlrlrd_2v2"),
+                    help="folder of replays to search for the feature explainer examples")
+    ap.add_argument("--learning-curve", default=str(ROOT / "data" / "learning_curve.json"))
+    ap.add_argument("--only", nargs="*", help="only these figures (e.g. intercept coverage jitter learning)")
     a = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
+    only = set(a.only or [])
+    run = lambda name: not only or name in only
+    if run("pipeline"):
+        fig_pipeline()
+    if run("touch"):
+        fig_touch_to_shot(a.replay)
+    if only & {"intercept", "coverage", "jitter"} or not only:
+        ex = find_examples(a.examples)
+        for name, fn in (("intercept", fig_intercept), ("coverage", fig_coverage), ("jitter", fig_jitter)):
+            if run(name) and name in ex:
+                fn(*ex[name])
+    if run("learning") and Path(a.learning_curve).exists():
+        fig_learning_curve(a.learning_curve)
+    if only and not only & {"importance", "goal_face", "conversion", "holdout"}:
+        return
     model = get_model()
-    fig_pipeline()
-    fig_touch_to_shot(a.replay)
-    fig_importance(model)
+    if run("importance"):
+        fig_importance(model)
     df = pd.read_csv(a.shots, low_memory=False)
-    fig_goal_face(df)
-    fig_conversion_map(df)
-    fig_holdout(df, model)
+    if run("goal_face"):
+        fig_goal_face(df)
+    if run("conversion"):
+        fig_conversion_map(df)
+    if run("holdout"):
+        fig_holdout(df, model)
 
 
 if __name__ == "__main__":

@@ -9,9 +9,9 @@ Every shot gets two numbers:
 - **xG (chance quality):** how good the chance was *before* the touch, from where the ball, shooter and defenders were. An open net you miss is still a big chance.
 - **xGOT (xG on target):** how likely the shot was to score *as struck*, from where the touch actually sent the ball. **xGOT − xG** shows how well a player strikes their chances.
 
-The model is trained on about **387,000 shots from 16,000 ranked 2v2 games**. On games it never saw, its xGOT is within 3% of the real goal count, with an AUC of 0.95.
+The model is trained on about **1.09 million shots from 44,000 ranked 2v2 games**. On games it never saw, its xGOT is within 4% of the real goal count, with an AUC of 0.95.
 
-> This rebuilds [**sertalpbilal/rocket_league_analytics**](https://github.com/sertalpbilal/rocket_league_analytics), the original Rocket League xG project, on a modern replay parser. It adds physics-based shot detection, richer features and about 35× more data. See [Credits](#credits).
+> This rebuilds [**sertalpbilal/rocket_league_analytics**](https://github.com/sertalpbilal/rocket_league_analytics), the original Rocket League xG project, on a modern replay parser. It adds physics-based shot detection, richer features and about 100× more data. See [Credits](#credits).
 
 ---
 
@@ -104,7 +104,7 @@ A shot is a **goal** if the shooting team scores before any of its players touch
 
 ### ⑥ Features: [`rlxg/shots.py`](rlxg/shots.py)
 
-Everything is computed in the **attacking frame** (the target goal is always at +y, mirrored left/right), so the model doesn't depend on team colour or which side of the pitch the shot came from. There are about 150 features per shot, in two groups:
+Everything is computed in the **attacking frame** (the target goal is always at +y, mirrored left/right), so the model doesn't depend on team colour or which side of the pitch the shot came from. There are about 190 features per shot, in two groups:
 
 | Group | Before the touch (chance xG) | After the touch (xGOT) |
 |---|---|---|
@@ -114,8 +114,30 @@ Everything is computed in the **attacking frame** (the target goal is always at 
 | Build-up | time since last touch; was it a pass, rebound or own carry | same |
 | Defence | each defender's **intercept margin** against the straight ball→goal line, goal-side defenders, goalkeeper position and movement | each defender's **intercept margin** along the predicted path, how many can intercept |
 | Support | teammate's distance to the ball and goal | same |
+| Goal-mouth coverage | how much of a 7 × 3 grid across the goal each defender can cover, for the ball's own speed and for a hard shot | — |
+| Pressure | how soon the nearest defenders can reach the ball, how fast they're closing, which way they face | same |
+| Recent movement | shooter, ball, both defenders and teammate 0.25 s and 0.5 s earlier: who is turning, accelerating or retreating | same |
+| Game state | score difference, seconds left, overtime | same |
 
-**Can a defender get there?** ([`rlxg/defence.py`](rlxg/defence.py)) The intercept margin is the time a defender needs to reach a point on the ball's path, minus when the ball gets there. The time needed starts from the defender's speed *towards that point* (negative if they are driving away), adds acceleration while their boost lasts, a turn penalty if they face the wrong way, and a jump or aerial climb when the ball is too high to hit from the ground. The two best-placed defenders each get this margin plus its ingredients. This is the single most important input to both models: adding it cut xGOT log loss by 8–10% and chance xG by about 2%.
+Three of these do most of the work, and each takes a little explaining.
+
+**Can a defender get there?** ([`rlxg/defence.py`](rlxg/defence.py)) For every point on the ball's path, each defender gets the time they need to reach it, and the **margin** is that time minus when the ball gets there: negative means they make it. The time needed starts from the defender's speed *towards that point* (negative if they're driving away), adds acceleration while their boost lasts, a turn penalty if they face the wrong way, and a jump or aerial climb when the ball is too high to hit from the ground. The two best-placed defenders each get the margin at their best point plus its ingredients. It's the most important input to xGOT, about a quarter of the model's total gain. Adding it cut xGOT log loss by 8–10%.
+
+![Defender intercept timing on a real shot](docs/img/fig_intercept.png)
+
+*Left: a shot's simulated path, coloured by when the ball gets to each point, and the two defenders with their last 0.5 s of movement. Right: for each point on the path, when the ball arrives (dashed) and how long each defender needs to get there. Defender 1, the keeper, gets to the ball 0.31 s before it does, near the line. Defender 2 is 0.62 s too late everywhere.*
+
+**How much of the goal is open?** ([`rlxg/situation.py`](rlxg/situation.py)) The same timing, before the touch, against straight lines from the ball to 21 points across the goal mouth. A keeper covering the near post leaves the far post open, which a single aim point can't see. It's done at the ball's own speed and for a hard shot (2,800 uu/s), and summarised as the share of the goal that's open, the most open spot and the average margin. The four coverage features are the top four inputs to chance xG.
+
+![Goal-mouth coverage before a shot](docs/img/fig_coverage.png)
+
+*The best defender's margin on the line to each of the 21 spots. The defender on the left covers that side, and the far side of the goal is open.*
+
+**Would it have gone in?** ([`rlxg/rsim.py`](rlxg/rsim.py)) Replays record the ball's state with a little noise, and a shot that clips the post can go either way. So RocketSim plays 16 copies of the shot forward, each nudged by a few units of position, 1% of speed and a little spin, and `sim_p_goal` is the share that go in. It's the second most important xGOT input.
+
+![RocketSim jitter runs for one shot](docs/img/fig_jitter.png)
+
+*Sixteen slightly different copies of a shot heading for the post. Eight go in, so `sim_p_goal` = 0.5.*
 
 Location alone explains a lot, but not everything. Shots from the same spot can be open nets or blocked by two defenders:
 
@@ -136,7 +158,7 @@ Two **LightGBM** classifiers are trained on the same shots:
 
 ![Feature importance for both models](docs/img/fig_importance.png)
 
-Chance xG depends mostly on geometry and where the defenders stand. xGOT depends mostly on whether a defender can get to the ball's actual path, and how close it is heading to the posts.
+Chance xG depends mostly on how much of the goal is open and on the angle to goal. xGOT depends mostly on whether a defender can get to the ball's actual path, whether RocketSim says it goes in, and how close it is heading to the posts.
 
 ### ⑧ Where the shot ended: [`rlxg/outcome.py`](rlxg/outcome.py)
 
@@ -154,14 +176,16 @@ The end point, the predicted path and a 3D clip of the play are stored with each
 
 ## Data
 
-The model covers 2v2 only and is trained on about 397k shots.
+The model covers 2v2 only. Its classifiers are trained on 1.09M shots from 44,000 games.
 
 | Source | Games | Shots | Conversion | Used for |
 |---|---|---|---|---|
-| [High-Level RL Replay Dataset](https://www.kaggle.com/datasets/rolvarild/high-level-rocket-league-replay-dataset) (Kaggle), newest 15k ranked 2s, Mar 2025 – Apr 2026, mostly SSL lobbies | 15,000 | 376k | 23.2% | training (10% held out for SSL calibration) |
-| [Ballchasing](https://ballchasing.com), newest ranked 2s where every player is C3–GC2 (Apr 2026, 184 uploaders) | 426 | 9.0k | 27.3% | C3–GC2 calibration |
+| [High-Level RL Replay Dataset](https://www.kaggle.com/datasets/rolvarild/high-level-rocket-league-replay-dataset) (Kaggle), every ranked 2s game in it, Nov 2021 – Apr 2026, mostly SSL lobbies | 48,374 | 1.20M | 23.2% | training (10% held out for SSL calibration) |
+| [Ballchasing](https://ballchasing.com), newest ranked 2s where every player is C3–GC2 (late Apr 2026, 192 uploaders) | 844 | 17.9k | 26.8% | C3–GC2 calibration |
 | Replays from the [original repo](https://github.com/sertalpbilal/rocket_league_analytics) (2021) | 437 | 8.3k | 31.1% | training |
 | The author's own games | 170 | 3.9k | 28.0% | holdout only |
+
+The ballchasing set is still growing: a collector is gathering 20,000 C3–GC2 games, and once it's done the calibration gets refitted on all of them ([`docs/final_rebuild.md`](docs/final_rebuild.md)). The classifiers don't change, since they never train on those games.
 
 The replays and the shot tables built from them are **not in this repo**; they come to tens of GB. The [rebuilding](#rebuilding-the-model) scripts download and rebuild them.
 
@@ -173,16 +197,30 @@ All numbers are out-of-sample.
 
 | Games | Model | Predicted vs goals | Log loss | AUC |
 |---|---|---|---|---|
-| C3–GC2 (cross-validated) | **xGOT** | 2,440 vs 2,440 | **0.233** | **0.953** |
-| C3–GC2 (cross-validated) | chance xG | 2,440 vs 2,440 | 0.384 | 0.868 |
-| Author's games (never trained on) | **xGOT** | 1,052 vs 1,084 (−3%) | 0.242 | 0.951 |
-| Author's games (never trained on) | chance xG | 1,057 vs 1,084 (−2%) | 0.407 | 0.857 |
-| SSL holdout | xGOT, `--skill ssl` | 8,691 vs 8,691 | 0.210 | 0.957 |
-| SSL holdout | chance xG, `--skill ssl` | 8,691 vs 8,691 | 0.330 | 0.890 |
+| C3–GC2 (cross-validated) | **xGOT** | 4,799 vs 4,799 | **0.220** | **0.957** |
+| C3–GC2 (cross-validated) | chance xG | 4,799 vs 4,799 | 0.369 | 0.877 |
+| Author's games (never trained on) | **xGOT** | 1,044 vs 1,084 (−4%) | 0.235 | 0.954 |
+| Author's games (never trained on) | chance xG | 1,042 vs 1,084 (−4%) | 0.400 | 0.863 |
+| SSL holdout | xGOT, `--skill ssl` | 27,995 vs 27,991 | 0.195 | 0.963 |
+| SSL holdout | chance xG, `--skill ssl` | 27,992 vs 27,991 | 0.314 | 0.901 |
 
-For scale, on C3–GC2 shots, guessing the base rate for every shot scores 0.586 log loss, and a classic distance + angle model scores 0.524.
+For scale, on C3–GC2 shots, guessing the base rate for every shot scores 0.581 log loss, and a classic distance + angle model scores 0.510. Chance xG is *meant* to score worse than xGOT, because it can't see where the touch sent the ball.
 
-Switching the ball prediction from the old flat-plane model to RocketSim left these numbers about where they were: on the same shots, xGOT log loss went from 0.270 to 0.268 on C3–GC2 and from 0.277 to 0.279 on the author's games. The kinematic defender features did far more: with the same shots and split, xGOT log loss fell from 0.254 to 0.233 on C3–GC2, 0.270 to 0.242 on the author's games and 0.230 to 0.210 on the SSL holdout ([`scripts/compare_defence.py`](scripts/compare_defence.py)). RocketSim's main gains are a predicted path that matches the real ball, and about 3% more shots detected (mostly misses that roll wide). Chance xG is *meant* to score worse than xGOT, because it can't see where the touch sent the ball.
+**What changed in the last rebuild.** The previous model was trained on 15,000 games; this one uses all 44,000 ranked 2v2 games in the Kaggle dataset, plus four new feature groups: goal-mouth coverage, pressure, recent movement and game state. On the same C3–GC2 shots, xGOT log loss fell from 0.231 to 0.220 and AUC rose from 0.953 to 0.957. On the author's games, which the previous model had trained on, xGOT went from 0.242 to 0.235. Each new feature group was tested on its own ([`scripts/compare_features.py`](scripts/compare_features.py)): together they cut log loss by 0.004–0.005 on C3–GC2 for both models, about five standard errors. Game state does most of it for xGOT, likely because a shot taken as the clock runs out can't score once the ball touches the ground. Goal-mouth coverage does most of it for chance xG.
+
+Earlier changes, measured the same way: the kinematic defender features cut xGOT log loss from 0.254 to 0.233 on C3–GC2 ([`scripts/compare_defence.py`](scripts/compare_defence.py)). Switching the ball prediction from a flat-plane model to RocketSim left log loss about where it was, but gave a predicted path that matches the real ball and about 3% more shots detected, mostly misses that roll wide.
+
+### Does more data still help?
+
+[`scripts/learning_curve.py`](scripts/learning_curve.py) trains both models on growing slices of the high-level games, from 500 up to all 39,000 in its training pool, and scores each on the same held-out games.
+
+![Learning curves and training curves](docs/img/fig_learning_curve.png)
+
+*Left: log loss on games the model never trained on, against how many games it trained on (log scale). Right: log loss after each tree for the full-size models, on the training games (dotted) and held-out games (solid). These use quicker settings than the saved model (1,200 trees at learning rate 0.05), so the numbers sit a little above the table's.*
+
+- **It hasn't plateaued.** Every doubling of the data still helps, but each doubling helps a bit less. Going from 20,000 to 39,000 games cut xGOT log loss by 0.004 on held-out high-level games and C3–GC2 alike. A curve fitted to these points predicts about another 2% from doubling the data again, and about 4% from four times as much. The Kaggle dataset is used up, though, so the next big gain would need a new source of high-level games.
+- **Mid-rank games improve too.** The C3–GC2 curve falls in step with the high-level one, so learning physics from SSL games carries over to other ranks.
+- **More trees helped right up to the limit.** The held-out loss was still falling slowly at tree 1,200, while the gap between training and held-out loss keeps growing (that's the model starting to memorise). The saved model uses 4,000 trees at a smaller step (0.02), which goes a little further. Tuning that is a cheaper gain than more data.
 
 ### Compared with the original
 
@@ -190,9 +228,9 @@ Switching the ball prediction from the old flat-plane model to RocketSim left th
 |---|---|---|
 | Parser | carball (unmaintained) | subtr-actor (Rust) |
 | What counts as a shot | every touch | last touch of a carry whose simulated path reaches the goal |
-| Features | raw position, velocity and rotation of the shooter and two opponents; no ball | ~150 geometric features in the attacking frame, including the ball, its predicted path and whether each defender can reach it |
+| Features | raw position, velocity and rotation of the shooter and two opponents; no ball | ~190 features in the attacking frame, including the ball, its predicted path, whether each defender can reach it, how much of the goal is open, and the score and clock |
 | Model | XGBoost | LightGBM ×2 (chance xG + xGOT), per-rank calibration |
-| Data | ~400 games | ~16,000 games |
+| Data | ~400 games | ~44,000 games |
 
 Labelling every touch let dribble touches inflate xG, since a five-touch dribble towards goal counted as five shots.
 
@@ -236,11 +274,14 @@ History lives in `data/dashboard/xg.sqlite`. "You" is detected as the most frequ
 
 ## Rebuilding the model
 
+Run these inside the project's virtual environment (`.venv\Scripts\activate`). The system
+Python lacks the replay parser, and the build then fails on every replay.
+
 ```bash
 # 1a. high-level 2v2 replays from Kaggle (KAGGLE_API_TOKEN in .env). Reads only the needed
 #     entries out of the 147 GB archive with HTTP range requests (~20 files/s)
 python scripts/download_kaggle.py --mode 2v2 -n 0        # fetches metadata.jsonl only
-python scripts/download_kaggle_archive.py --mode 2v2 -n 15000
+python scripts/download_kaggle_archive.py --mode 2v2 -n 100000   # all ~48k ranked 2v2 games
 
 # 1b. C3–GC2 games from ballchasing (BALLCHASING_TOKEN in .env). Paced to the free tier's
 #     200 files/hour; re-run to carry on further back in time
@@ -249,12 +290,16 @@ python scripts/download_ballchasing.py fetch -n 1000
 #     (.github/workflows/ballchasing.yml), then copy them down:
 python scripts/download_ballchasing.py pull
 
-# 2. shots table. Each replay is parsed in its own subprocess and cached, so you can stop
-#    and re-run to resume. Add --cached-only to train on what's parsed so far.
-python scripts/build_dataset.py data/raw/hlrlrd_2v2 data/raw/ballchasing_c3_gc2 data/raw/legacy_2v2 "<your Demos folder>" -o data/shots.csv -j 6
+# 2. shots table. Replays are parsed in worker subprocesses (a crash loses only that replay)
+#    and cached, so you can stop and re-run to resume. About 200 replays a minute with -j 12
+#    on a 6-core/12-thread CPU. Add --cached-only to train on what's parsed so far.
+python scripts/build_dataset.py data/raw/hlrlrd_2v2 data/raw/ballchasing_c3_gc2 data/raw/legacy_2v2 "<your Demos folder>" -o data/shots.csv --cache data/cache_v7 -j 12
 
-# 3. train + evaluate (about 1 minute). Writes models/xg_model.joblib
+# 3. train + evaluate. Writes models/xg_model.joblib
 python scripts/train.py data/shots.csv
+#    or, with more C3–GC2 games or your own games but the same high-level ones, keep the
+#    classifiers and refit only the per-rank calibrations (minutes, mostly reading the table):
+python scripts/train.py data/shots.csv --recalibrate models/xg_model.joblib
 
 python -m pytest tests
 ```
@@ -267,9 +312,10 @@ Other scripts:
 - `scripts/compare_sources.py` reruns the "how should SSL data be used for C3–GC2?" comparison.
 - `scripts/compare_defence.py` trains the models with and without the kinematic defender features, on whatever is in the cache.
 - `scripts/compare_features.py` does the same for each extra feature group in `rlxg/situation.py`.
-- [`docs/final_rebuild.md`](docs/final_rebuild.md): the last big rebuild, shutting down the cloud collection, and what to keep before deleting the replays.
+- `scripts/learning_curve.py <shots.csv>` trains on growing slices of the high-level games to show whether more data would still help.
+- [`docs/final_rebuild.md`](docs/final_rebuild.md): the last big rebuild (where it stands, what's left), shutting down the cloud collection, and what to keep before deleting the replays.
 - `scripts/compare_physics.py <replays...>` plays every untouched shot forward with both ball models and compares them with what the real ball did.
-- `docs/make_figures.py` regenerates the figures in this README.
+- `docs/make_figures.py` regenerates the figures in this README (`--only intercept coverage ...` for some of them). The feature explainers search the Kaggle replays for example shots, so they need those replays on disk.
 
 ## Project layout
 

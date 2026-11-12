@@ -10,6 +10,11 @@ Data roles (by replay folder = `source` column):
 
 Metrics printed are all out-of-sample: the C3-GC2 numbers use 5-fold grouped CV
 of the calibration step; SSL and Demos are clean holdouts.
+
+Only the calibrations, keeping a trained model's classifiers (minutes, not a full retrain; for when
+more C3-GC2 games or your own games arrive, since neither is used to train the classifiers):
+
+    python scripts/train.py data/shots.csv --recalibrate models/xg_model.joblib
 """
 from __future__ import annotations
 
@@ -64,7 +69,10 @@ def main():
     ap.add_argument("shots", nargs="?", default="data/shots.csv")
     ap.add_argument("-o", "--out", default=str(ROOT / "models" / "xg_model.joblib"))
     ap.add_argument("--compare", default=None, help="previous model to compare against (default: current saved model)")
+    ap.add_argument("--recalibrate", metavar="MODEL", default=None,
+                    help="keep this model's classifiers and only refit the per-band calibrations")
     args = ap.parse_args()
+    base = XGModel.load(args.recalibrate) if args.recalibrate else None
 
     df = pd.read_csv(args.shots, low_memory=False)
     df = df[df.team_size == 2].reset_index(drop=True)
@@ -75,6 +83,9 @@ def main():
     rng = np.random.default_rng(0)
     ssl_replays = df.loc[df.source == SSL_SOURCE, "replay_id"].unique()
     ssl_hold = set(rng.choice(ssl_replays, size=len(ssl_replays) // 10, replace=False))
+    if base is not None:
+        # the holdout the classifiers never saw; models from before this was saved fall back to the draw above
+        ssl_hold = set(base.meta.get("ssl_holdout", ssl_hold))
     is_ssl_hold = np.isin(rid, list(ssl_hold))
     phys = df.source.isin(PHYSICS_SOURCES).to_numpy() & ~is_ssl_hold
     c3 = (df.source == C3GC2_SOURCE).to_numpy()
@@ -95,13 +106,14 @@ def main():
         except Exception as e:
             print("could not load previous model:", e)
 
-    def fit_part(label: str, feats: list[str]):
-        """Classifier + per-band calibrations for one feature set; prints out-of-sample metrics."""
+    def fit_part(label: str, feats: list[str], booster=None):
+        """Classifier (unless one is given) + per-band calibrations; prints out-of-sample metrics."""
         print(f"\n==================== {label} ====================")
         X = prepare(df, feats)
-        t = time.time()
-        booster = LGBMClassifier(**LGBM_PARAMS).fit(X[phys], y[phys])
-        print(f"trained classifier in {time.time() - t:.0f}s")
+        if booster is None:
+            t = time.time()
+            booster = LGBMClassifier(**LGBM_PARAMS).fit(X[phys], y[phys])
+            print(f"trained classifier in {time.time() - t:.0f}s")
         p_raw = booster.predict_proba(X)[:, 1]
         cal_c3 = fit_cal(p_raw[c3], y[c3])
         cal_ssl = fit_cal(p_raw[is_ssl_hold], y[is_ssl_hold])
@@ -134,21 +146,26 @@ def main():
         print((imp / imp.sum()).sort_values(ascending=False).head(12).round(3).to_string())
         return booster, {"c3-gc2": cal_c3, "ssl": cal_ssl}, res
 
-    booster, cals, res = fit_part("xGOT", FEATURES)
-    ch_booster, ch_cals, ch_res = fit_part("chance xG", CHANCE_FEATURES)
+    feats = list(base.features) if base else list(FEATURES)
+    ch_feats = list(base.chance_features) if base else list(CHANCE_FEATURES)
+    booster, cals, res = fit_part("xGOT", feats, base.booster if base else None)
+    ch_booster, ch_cals, ch_res = fit_part("chance xG", ch_feats, base.chance_booster if base else None)
     res = pd.concat([res, ch_res], ignore_index=True)
 
+    meta = dict(
+        trained_at=time.strftime("%Y-%m-%d %H:%M"),
+        n_shots_physics=int(phys.sum()), n_replays_physics=int(df[phys].replay_id.nunique()),
+        params=LGBM_PARAMS,
+    )
+    if base is not None:     # the classifiers, and what they were trained on, are the old model's
+        meta = {**base.meta, "recalibrated_at": time.strftime("%Y-%m-%d %H:%M")}
+    meta.update(n_shots_c3gc2=int(c3.sum()), n_shots_ssl_holdout=int(is_ssl_hold.sum()),
+                ssl_holdout=sorted(ssl_hold), eval=json.loads(res.to_json(orient="records")))
     model = XGModel(
-        booster=booster, features=list(FEATURES),
+        booster=booster, features=feats,
         calibrations=cals, default_band="c3-gc2",
-        chance_booster=ch_booster, chance_features=list(CHANCE_FEATURES), chance_calibrations=ch_cals,
-        meta=dict(
-            trained_at=time.strftime("%Y-%m-%d %H:%M"),
-            n_shots_physics=int(phys.sum()), n_replays_physics=int(df[phys].replay_id.nunique()),
-            n_shots_c3gc2=int(c3.sum()), n_shots_ssl_holdout=int(is_ssl_hold.sum()),
-            params=LGBM_PARAMS,
-            eval=json.loads(res.to_json(orient="records")),
-        ),
+        chance_booster=ch_booster, chance_features=ch_feats, chance_calibrations=ch_cals,
+        meta=meta,
     )
     model.save(args.out)
     print(f"\nSaved {args.out}  (bands: {model.bands}, default {model.default_band})")

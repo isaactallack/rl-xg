@@ -1,6 +1,6 @@
 """Do the kinematic defender features (rlxg/defence.py) help? Old feature lists vs old + new.
 
-    python scripts/compare_defence.py                      # reads data/cache_v6 as it stands
+    python scripts/compare_defence.py                      # reads data/cache_v7 as it stands
 
 Works on a partial rebuild: it reads whatever replays are finished in the cache, so
 it can be run while build_dataset.py is still going, or after it was stopped.
@@ -57,7 +57,7 @@ def ll(y, p):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--cache", default=str(ROOT / "data" / "cache_v6"))
+    ap.add_argument("--cache", default=str(ROOT / "data" / "cache_v7"))
     args = ap.parse_args()
 
     df = load_cache(Path(args.cache))
