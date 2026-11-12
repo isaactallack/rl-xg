@@ -1,0 +1,45 @@
+# Collects C3-GC2 ranked-doubles replays from ballchasing into an Azure blob container,
+# so nothing has to run at home. Each hourly run downloads up to 190 replays (the free
+# API tier allows 200 an hour) and stops once the container holds STOP_AT replays.
+# Pull them down with:  python scripts/download_ballchasing.py pull
+#
+# Secrets: BALLCHASING_TOKEN, AZURE_BLOB_CONTAINER_URL (container URL + SAS token).
+# Note: GitHub pauses scheduled workflows after 60 days without commits to the repo.
+name: Collect ballchasing replays
+
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+    inputs:
+      max_files:
+        description: "Replays to download this run (max 190 on the free tier)"
+        default: "190"
+
+concurrency:
+  group: ballchasing
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  STOP_AT: "20000"
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "azure-storage-blob>=12.19"
+      - name: Download replays into Azure
+        env:
+          BALLCHASING_TOKEN: ${{ secrets.BALLCHASING_TOKEN }}
+          AZURE_BLOB_CONTAINER_URL: ${{ secrets.AZURE_BLOB_CONTAINER_URL }}
+        run: >
+          python scripts/download_ballchasing.py fetch --blob
+          --interval 1.1 --max-files ${{ inputs.max_files || '190' }} --stop-at $STOP_AT
