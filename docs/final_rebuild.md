@@ -16,7 +16,9 @@ python scripts/download_kaggle_archive.py --mode 2v2 -n 100000
 
 **Ballchasing (C3–GC2).** The GitHub Actions workflow `.github/workflows/ballchasing.yml`
 downloads up to 190 replays an hour into the Azure container `strlxgreplays/ballchasing`
-and stops once it holds 20,000 (about 5 days). Check on it with:
+and stops once it holds 20,000 (about 5 days). When it gets there it opens a GitHub issue,
+"Ballchasing collection complete", which GitHub emails you, and disables itself. To check on it
+in the meantime:
 
 ```bash
 python scripts/download_ballchasing.py status

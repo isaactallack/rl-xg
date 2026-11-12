@@ -22,6 +22,8 @@ concurrency:
 
 permissions:
   contents: read
+  issues: write      # to open the "collection complete" issue
+  actions: write     # to disable this workflow once it's done
 
 env:
   STOP_AT: "20000"
@@ -37,9 +39,19 @@ jobs:
           python-version: "3.12"
       - run: pip install "azure-storage-blob>=12.19"
       - name: Download replays into Azure
+        id: fetch
         env:
           BALLCHASING_TOKEN: ${{ secrets.BALLCHASING_TOKEN }}
           AZURE_BLOB_CONTAINER_URL: ${{ secrets.AZURE_BLOB_CONTAINER_URL }}
         run: >
           python scripts/download_ballchasing.py fetch --blob
           --interval 1.1 --max-files ${{ inputs.max_files || '190' }} --stop-at $STOP_AT
+      - name: Collection complete - open an issue (emails you) and switch this workflow off
+        if: steps.fetch.outputs.full == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "Ballchasing collection complete (${{ steps.fetch.outputs.count }} replays)" \
+            --body "The Azure container holds ${{ steps.fetch.outputs.count }} replays, so the collector has disabled itself. Next: steps 2-3 of docs/final_rebuild.md (pull, then shut down Azure)."
+          gh workflow disable ballchasing.yml --repo "$GITHUB_REPOSITORY"

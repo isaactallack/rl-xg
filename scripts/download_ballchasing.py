@@ -157,6 +157,7 @@ def fetch(args) -> None:
     print(f"{store}: {len(have)} replays already there; resuming before {state.get('before') or 'now'}", flush=True)
     if args.stop_at and len(have) >= args.stop_at:
         print(f"already have {len(have)} >= --stop-at {args.stop_at}; nothing to do")
+        _mark_full(len(have))
         return
 
     params = {"playlist": args.playlist, "min-rank": args.min_rank, "max-rank": args.max_rank,
@@ -216,6 +217,16 @@ def fetch(args) -> None:
     finally:
         save()
     print(f"done: {got} downloaded, {failed} failed -> {store} ({len(have)} in total)")
+    if args.stop_at and len(have) >= args.stop_at:
+        _mark_full(len(have))
+
+
+def _mark_full(n: int) -> None:
+    """Tell the GitHub Actions workflow the target is reached (it then opens an issue and disables itself)."""
+    out = os.environ.get("GITHUB_OUTPUT")
+    if out:
+        with open(out, "a") as f:
+            f.write(f"full=true\ncount={n}\n")
 
 
 def pull(args) -> None:
